@@ -1,0 +1,47 @@
+require "colorize"
+
+require_relative "../closeio"
+require_relative "pollev/account"
+require_relative "opportunities"
+
+class Closeio::SyncOpportunities
+  ACTIVE = "status_type:active"
+
+  def initialize
+    @opportunities = Closeio::Search.new("opportunity")
+  end
+
+  def run
+    @opportunities.search(ACTIVE)
+    log :info, "Attempting to update #{@opportunities.total || 0} opportunities.".yellow
+    update_opportunities(@opportunities)
+    while @opportunities.next
+      update_opportunities(@opportunities)
+    end
+    log :info, "Completed update for opportunities.\n".green
+  end
+
+  private
+  def update_opportunities(opportunities)
+    opportunities.each do |opportunity|
+      opportunity = Closeio::Opportunity.new(opportunity)
+      account = find_account(opportunity)
+      if account
+        account = Closeio::Pollev::Account.new(account)
+        opportunity.update(account)
+      else
+        log :warn, "Unable to find account for #{opportunity.attributes['lead_name']}."
+      end
+    end
+  end
+
+  def find_account(opportunity)
+    lead = opportunity.lead
+    account_id = lead["custom"]["z_account_id"]
+    Closeio::Pollev::Account.find(account_id).first if account_id
+  end
+
+  def log(level, *messages)
+    Closeio.logger.send level, messages.join(" | ")
+  end
+end

@@ -1,0 +1,24 @@
+class SalesQuotaRespondingUsersCollector
+  attr_accessor :account
+  def initialize(account)
+    self.account = account
+  end
+  
+  def count(days = 31)
+    count_users = %[
+      SELECT COUNT(tmp.count)/1.5 FROM (
+        SELECT COUNT(*) AS count
+          FROM accounts a
+          JOIN polls p ON p.account_id = a.id
+          JOIN results r ON r.poll_id = p.id
+          JOIN participants s ON r.voter_id = s.id
+          AND a.id = #{account.id}
+          AND r.created_at > DATE_SUB(NOW(), INTERVAL %d DAY)
+          GROUP BY r.voter_id HAVING count(r.id) > 0
+          LIMIT 5000
+      ) AS tmp;
+    ]
+    count_users = Account.send(:sanitize_sql_array, [count_users, days])
+    Account.connection.select_values(count_users).first.to_i
+  end
+end

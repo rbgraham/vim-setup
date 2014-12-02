@@ -1,0 +1,21 @@
+require "time" # For Time.parse
+require "colorize" # To make console output easy to scan
+
+require_relative "../lib/closeio"
+require_relative "../lib/airbrake_config"
+require_relative "../lib/closeio/sync_opportunities"
+require_relative "../lib/closeio/sync_key_leads"
+
+begin
+  Closeio.logger.info "Updating opportunities.".yellow
+  opportunities_sync = Closeio::SyncOpportunities.new
+  opportunities_sync.run
+
+  Closeio.logger.info "Updating leads.".yellow
+  leads_sync = Closeio::SyncKeyLeads.new
+  leads_sync.run
+
+rescue => e
+  Airbrake.notify e, :session => ENV.to_hash if defined?(Airbrake)
+  raise
+end

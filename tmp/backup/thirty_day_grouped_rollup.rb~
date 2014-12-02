@@ -1,0 +1,192 @@
+# Use this as a base class for any KPI widget
+# that does a 30 day rolling aggregate where
+# you are grouping the results. (ie. polls by type, results by modality)
+#
+# The subclass is expected to implement its own `title` and `redis_key` methods that return strings
+# A `query` method that returns an ActiveRecord collection also needs to be implemented
+#
+# If you want to override how the chart looks, implement your own `to_chart_json` method
+# mutating the json data structure as needed
+class Kpi::ThirtyDayGroupedRollup
+  def to_chart_json
+    hash = highcharts_base_hash
+
+    hash["xAxis"].first["categories"] = historical_runs["categories"]
+    hash["series"] = historical_runs["series"]
+
+    hash["yAxis"].first["title"]["text"] = title
+
+    hash.to_json
+  end
+
+  def process!
+    last_run_date = DateTime.parse historical_runs["last_run"]
+
+    if one_week_since_last_run?(last_run_date)
+      append_weekly_data
+      save(historical_runs.to_json)
+    end
+
+    calculate_total
+  end
+
+  private
+
+  def append_weekly_data
+    end_date = last_sunday
+
+    historical_runs["categories"] << end_date.strftime("%-m-%y")
+
+    recent_polls = query(end_date - 30.days)
+    check_for_new_data_type(recent_polls)
+
+    poll_type_names = historical_runs["series"].map {|h| h['name'] }
+
+    historical_runs["series"].each do |hash|
+      recent_polls.each do |p|
+        if p["type"] == hash["name"]
+          hash["data"] << p["count"]
+          poll_type_names.delete(hash["name"])
+        end
+      end
+    end
+
+    poll_type_names.each do |name|
+      run = historical_runs["series"].select {|h| h["name"] == name }.first
+      run['data'] << 0
+    end
+
+    historical_runs["last_run"] = end_date.strftime("%-d-%-m-%Y")
+  end
+
+  def check_for_new_data_type(query_results)
+    past_data_types = historical_runs["series"].map { |s| s["name"] }
+
+    query_results.each do |r|
+      add_new_data_type(r["type"]) unless past_data_types.include? r["type"]
+    end
+  end
+
+  def add_new_data_type(type)
+    if first_type = historical_runs["series"].first
+      number_of_previous_runs = first_type["data"].length
+    else
+      number_of_previous_runs = 0
+    end
+
+    historical_runs["series"] << {
+      "name" => type,
+      "data" => Array.new(number_of_previous_runs) { 0 }
+    }
+  end
+
+  def calculate_total
+    historical_runs["series"] << {
+      "name" => "Total",
+      "data" => grand_total
+    }
+  end
+
+  def grand_total
+    historical_runs["series"].map { |s| s["data"] }.transpose.map(&:sum)
+  end
+
+  def null_result
+    {
+      "categories" => [],
+      "series" => [],
+      "last_run" => 8.days.ago.strftime("%-d-%-m-%Y")
+    }
+  end
+
+  def historical_runs
+    @historical_runs ||= if (json = get)
+      JSON.parse json
+    else
+      null_result
+    end
+  end
+
+  # TODO DRY with Kpi::Highcharts
+  def highcharts_base_hash
+    # Colors that contrast well. Based on our participant management colors
+    chart_colors = ["rgb(170, 212, 79)", "rgb(106, 206, 201)", "rgb(105, 175, 236)", "rgb(197, 138, 197)", "rgb(250, 183, 40)", "rgb(244, 114, 111)", "rgb(55, 154, 196)", "rgb(215, 233, 188)", "rgb(115, 98, 89)", "rgb(202, 208, 215)"]
+
+    {
+      "colors" => chart_colors,
+      "chart" => {
+        "renderTo" => "container",
+        "type" => "line",
+        "plotBackgroundColor" => "rgba(35,37,38,0)",
+        "backgroundColor" => "rgba(35,37,38,100)",
+        "borderColor" => "rgba(35,37,38,100)",
+        "lineColor" => "rgba(35,37,38,100)",
+        "plotBorderColor" => "rgba(35,37,38,100)",
+        "plotBorderWidth" => nil,
+        "plotShadow" => false,
+        "zoomType" => "x"
+      },
+      "title" => nil,
+      "xAxis" => [
+        {
+          "categories" => [],
+          "labels" => {
+            "align" => "center"
+          },
+          "tickInterval" => 1,
+          "tickColor" => "rgba(60,60,60,20)",
+          "lineColor" => "rgba(60,60,60,20)",
+          "title" => {
+            "text" => "Date"
+          },
+          "plotLines" => []
+        }
+      ],
+      "yAxis" => [
+        {
+          "type" => "logarithmic",
+          "gridLineWidth" => 0,
+          "labels" => {
+            "style" => {
+              "color" => "#47CEEB"
+            }
+          },
+          "title" => {
+            "text" => "",
+            "style" => {
+              "color" => "#47CEEB"
+            }
+          }
+        }
+      ],
+      "legend" => {
+        "enabled" => false
+      },
+      "credits" => {
+        "enabled" => false
+      },
+      "plotOptions" => {
+        "area" => {
+          "fillOpacity" => 0.25
+        }
+      },
+      series: []
+    }
+  end
+
+  def one_week_since_last_run?(last_run_date)
+    DateTime.now - 7.days >= last_run_date
+  end
+
+  def last_sunday
+    (DateTime.now.utc - DateTime.now.wday.days).midnight
+  end
+
+  def get
+    RedisConnection.get(redis_key)
+  end
+
+  def save(json)
+    RedisConnection.set(redis_key, json)
+  end
+end

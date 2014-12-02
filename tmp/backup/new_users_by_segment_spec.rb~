@@ -1,0 +1,265 @@
+require 'spec_helper'
+
+describe Kpi::NewUsersBySegment, :type => :model do
+  before do
+    Timecop.freeze(Time.utc(2009, 7, 22)) do
+      2.times{ create_user } # professional
+      create_user(:email => "test@hse.k12.in.us") #k12
+      create_user(:email => "test@ucsd.edu") # higher ed
+    end
+
+    # doesn't work without seeding some initial data
+    instance.save_values([["21-7-2009",1111,2222,3333]])
+    instance.save_yoy_growth([["21-7-2009",-1.11,2.22,3.33]])
+  end
+
+  let(:instance){ Kpi::NewUsersBySegment.new }
+
+  let(:values) do
+    start = DateTime.parse("17-05-2009")
+    finish = DateTime.parse("19-07-2009")
+    (start .. finish).step(7).map.with_index do |date, i|
+      [date.strftime("%-d-%-m-%Y"), 1, 2, 2]
+    end.reverse
+  end
+  let(:values_with_gaps) do
+    start = DateTime.parse("17-05-2009")
+    finish = DateTime.parse("19-07-2009")
+    (start .. finish).step(7).map.with_index do |date, i|
+      (i%2 == 0) ? [date.strftime("%-d-%-m-%Y"), 1, 2, 2] : nil
+    end.compact.reverse
+  end
+  let(:gaps) do
+    start = DateTime.parse("17-05-2009")
+    finish = DateTime.parse("19-07-2009")
+    (start .. finish).step(7).map.with_index do |date, i|
+      (i%2 != 0) ? date : nil
+    end.compact.reverse.slice(1,10)
+  end
+
+  def create_user(hash = {})
+    user_hash = valid_user_hash.
+      merge(:account_relationship => 2).
+      merge(hash)
+    User.create!(user_hash) do |user|
+      user.account_id = rand(10000)
+    end
+  end
+
+  describe "values_json" do
+    context "no missing weeks" do
+      context "less than a week since last update" do
+        before do
+          Timecop.freeze Time.utc(2009, 7, 27)
+        end
+        after do
+          Timecop.return
+        end
+        it "does not update data in Redis" do
+          expect{ instance.values_json }.to_not change{ instance.read_values }
+        end
+        it "returns highcharts representation of values" do
+          values = JSON.parse(instance.values_json)
+          expect(values["series"].map{|s| s["data"]}).to eql([[1111],[2222],[3333]])
+        end
+      end
+      context "a week since last update" do
+        before do
+          Timecop.freeze Time.utc(2009, 7, 28)
+        end
+        after do
+          Timecop.return
+        end
+        it "updates data in Redis" do
+          old_values = instance.read_values
+          instance.values_json
+          new_values = instance.read_values
+          expect(new_values).to eql([["26-7-2009",2,1,1]] + old_values)
+        end
+        it "returns highcharts representation of values" do
+          values = JSON.parse(instance.values_json)
+          expect(values["series"].map{|s| s["data"]}).to eql([[1111,2],[2222,1],[3333,1]])
+        end
+      end
+    end
+    context "missing weeks" do
+      let (:k12_user) { OpenStruct.new(:k12? => true) }
+      let (:higher_ed_user) { OpenStruct.new(:k12? => false, :higher_ed? => true)}
+      let (:pro_user) { OpenStruct.new(:k12? => false, :higher_ed? => false) }
+      context "a week since last update" do
+        before do
+          Timecop.freeze Time.utc(2009, 7, 28)
+          instance.save_values(values_with_gaps)
+          Kpi::NewUsersBySegment.any_instance.expects(:recalculate_yoy_growth_by_segment).at_least_once.returns([])
+        end
+        after do
+          Timecop.return
+        end
+        it "updates data in Redis" do
+          instance.expects(:find_new_users_at).
+            with(DateTime.parse("2009-06-26"), DateTime.parse("2009-07-26")).
+            returns([pro_user, pro_user, k12_user, higher_ed_user])
+          instance.expects(:find_new_users_at).
+            with(DateTime.parse("2009-06-05"), DateTime.parse("2009-07-05")).
+            returns([pro_user, k12_user, k12_user, higher_ed_user, higher_ed_user])
+          instance.expects(:find_new_users_at).
+            with(DateTime.parse("2009-05-22"), DateTime.parse("2009-06-21")).
+            returns([pro_user, k12_user, k12_user, higher_ed_user, higher_ed_user])
+          instance.expects(:find_new_users_at).
+            with(DateTime.parse("2009-05-08"), DateTime.parse("2009-06-07")).
+            returns([pro_user, k12_user, k12_user, higher_ed_user, higher_ed_user])
+          instance.expects(:find_new_users_at).
+            with(DateTime.parse("2009-04-24"), DateTime.parse("2009-05-24")).
+            returns([pro_user, k12_user, k12_user, higher_ed_user, higher_ed_user])
+
+          old_values = instance.read_values
+          instance.values_json
+          new_values = instance.read_values
+
+          # Missing weeks combined with over a week since the run can cause
+          # this edge case. The data will be completely fixed on the next run.
+          expect(instance.missing_weeks.count).to eql(1)
+          expect(new_values).to eql([["26-7-2009",2,1,1]] +
+                                    (values.drop(1)))
+        end
+        it "returns highcharts representation of values" do
+          values = JSON.parse(instance.values_json)
+
+          vals = instance.read_values
+          pro_representation = vals.map {|p| p[1] }.reverse
+          k12_representation = vals.map {|p| p[2] }.reverse
+          higher_ed_representation = vals.map {|p| p[3] }.reverse
+          representation = [pro_representation,
+                            k12_representation,
+                            higher_ed_representation]
+
+          expect(values["series"].map{|s| s["data"]}).to eql(representation)
+        end
+      end
+      context "less than a week since last update" do
+        before do
+          Timecop.freeze Time.utc(2009, 7, 20)
+          instance.save_values(values_with_gaps)
+          Kpi::NewUsersBySegment.any_instance.expects(:recalculate_yoy_growth_by_segment).at_least_once.returns([])
+        end
+        after do
+          Timecop.return
+        end
+        it "updates data in Redis" do
+          instance.expects(:find_new_users_at).
+            with(DateTime.parse("2009-06-19"), DateTime.parse("2009-07-19")).
+            returns([pro_user, k12_user, k12_user, higher_ed_user, higher_ed_user])
+          instance.expects(:find_new_users_at).
+            with(DateTime.parse("2009-06-05"), DateTime.parse("2009-07-05")).
+            returns([pro_user, k12_user, k12_user, higher_ed_user, higher_ed_user])
+          instance.expects(:find_new_users_at).
+            with(DateTime.parse("2009-05-22"), DateTime.parse("2009-06-21")).
+            returns([pro_user, k12_user, k12_user, higher_ed_user, higher_ed_user])
+          instance.expects(:find_new_users_at).
+            with(DateTime.parse("2009-05-08"), DateTime.parse("2009-06-07")).
+            returns([pro_user, k12_user, k12_user, higher_ed_user, higher_ed_user])
+          instance.expects(:find_new_users_at).
+            with(DateTime.parse("2009-04-24"), DateTime.parse("2009-05-24")).
+            returns([pro_user, k12_user, k12_user, higher_ed_user, higher_ed_user])
+
+          old_values = instance.read_values
+          instance.values_json
+          new_values = instance.read_values
+
+          expect(instance.missing_weeks).to be_empty
+          expect(new_values).to eql(values)
+        end
+        it "returns highcharts representation of values" do
+          values = JSON.parse(instance.values_json)
+
+          vals = instance.read_values
+          pro_representation = vals.map {|p| p[1] }.reverse
+          k12_representation = vals.map {|p| p[2] }.reverse
+          higher_ed_representation = vals.map {|p| p[3] }.reverse
+          representation = [pro_representation,
+                            k12_representation,
+                            higher_ed_representation]
+
+          expect(values["series"].map{|s| s["data"]}).to eql(representation)
+        end
+
+      end
+    end
+  end
+
+  describe "growth_json" do
+    it "returns highcharts representation of values in Redis" do
+      growth = JSON.parse(instance.growth_json)
+      expect(growth["series"].map{|s| s["data"]}).to eql([[-1.11],[2.22],[3.33]])
+    end
+  end
+
+  describe "missing_weeks" do
+    context "no weeks are missing" do
+      before do
+        instance.save_values(values)
+      end
+      it "returns an empty array" do
+        expect(instance.missing_weeks).to be_empty
+      end
+    end
+    context "weeks are missing" do
+      before do
+        instance.save_values(values_with_gaps)
+      end
+      it "returns the missing weeks from the values in redis" do
+        expect(instance.missing_weeks).to eql(gaps)
+      end
+    end
+  end
+
+  describe "last_sunday_from" do
+    it "returns the sunday before the date passed in" do
+      christmas = DateTime.parse("2024-12-25")
+      memorial_day = DateTime.parse("2014-05-26")
+      april_fools = DateTime.parse("2013-04-01")
+
+      day = instance.last_sunday_from(christmas)
+      expect(day.wday).to eql(0)
+      expect(day.month).to eql(12)
+      expect(day.year).to eql(2024)
+
+
+      day = instance.last_sunday_from(memorial_day)
+      expect(day.wday).to eql(0)
+      expect(day.month).to eql(5)
+      expect(day.year).to eql(2014)
+
+      day = instance.last_sunday_from(april_fools)
+      expect(day.wday).to eql(0)
+      expect(day.month).to eql(3)
+      expect(day.year).to eql(2013)
+    end
+  end
+
+  describe "recalculate_yoy_growth_by_segment" do
+    let(:values) do
+      start = DateTime.parse("01-05-2012")
+      finish = DateTime.parse("01-05-2014")
+      (start .. finish).step(7).map.with_index do |date, i|
+        i > 75 ? [date.strftime("%-d-%-m-%Y"), 2, 2, 2] : [date.strftime("%-d-%-m-%Y"), 1, 1, 1]
+      end.reverse
+    end
+    before do
+      instance.save_values(values)
+    end
+    it "recalculates the growth for all valid entries" do
+      yoy_growth = instance.recalculate_yoy_growth_by_segment
+      expect(yoy_growth.count).to eql(53)
+      expect(yoy_growth.map {|a| a[1,3] }.flatten.uniq.count).to eql(2)
+      expect(yoy_growth.first.last).to eql(100.0)
+      expect(yoy_growth.last.last).to eql(0.0)
+    end
+    it "returns the growth data in the sorted date descending" do
+      yoy_growth = instance.recalculate_yoy_growth_by_segment
+      yoy_growth[0,yoy_growth.length-1].each_with_index do |val, i|
+        expect(Date.parse(val[0])).to be > (Date.parse(yoy_growth[i+1][0]))
+      end
+    end
+  end
+end

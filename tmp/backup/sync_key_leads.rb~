@@ -1,0 +1,45 @@
+require "colorize"
+
+require_relative "../closeio"
+require_relative "pollev/account"
+require_relative "leads"
+
+class Closeio::SyncKeyLeads
+  def initialize
+    @leads = Closeio::Search.new
+  end
+
+  def run
+    @leads.key_leads
+    log :info, "Attempting to update #{@leads.total || 0} paying leads.".yellow
+    results = []
+    update_leads(@leads)
+    while @leads.next
+      update_leads(@leads)
+    end
+    log :info, "Completed update for leads.\n".green
+  end
+
+  private
+  def update_leads(leads)
+    leads.each do |lead|
+      lead = Closeio::Lead.new(lead)
+      account = find_account(lead)
+      if account
+        account = Closeio::Pollev::Account.new(account)
+        lead.update(account.serializer.to_h)
+      else
+        log :warn, "Lead not updated because no account is found for #{lead.attributes["custom"]["z_account_id"]}, #{lead.attributes["name"]}.".red
+      end
+    end
+  end
+
+  def find_account(lead)
+    account_id = lead.attributes["custom"]["z_account_id"]
+    Closeio::Pollev::Account.find(account_id).first if account_id
+  end
+
+  def log(level, *messages)
+    Closeio.logger.send level, messages.join(" | ")
+  end
+end

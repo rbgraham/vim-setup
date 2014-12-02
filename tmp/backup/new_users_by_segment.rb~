@@ -1,0 +1,88 @@
+class Kpi::NewUsersBySegment < Kpi::Base
+  def values_json
+    Kpi::Highcharts::user_segment_graphs_json(
+      read_or_update_values, "New Users")
+  end
+
+  def growth_json
+    Kpi::Highcharts::user_segment_graphs_json(
+      read_yoy_growth, "YoY Growth Rate")
+  end
+
+  private
+
+  def read_or_update_values
+    values = read_values
+    missing = missing_weeks
+    unless missing_weeks.empty?
+      missing_weeks.each do |week|
+        end_date = last_sunday_from(week)
+        start_date = end_date - 30.days
+        new_users = find_new_users_at(start_date, end_date)
+
+        update_values(new_users, values, end_date)
+      end
+    end
+
+    values = read_values
+    if one_week_since_last_run?
+      new_users = find_new_users
+
+      update_values(new_users, values, current_end_date)
+    end
+    values
+  end
+
+  def update_values(new_users, values, date)
+    professional_count, k12_count, higher_ed_count = *count_types(new_users)
+    values.insert(index_for_missing_date(date, values), 
+                  [format_date(date), 
+                   professional_count, 
+                   k12_count, 
+                   higher_ed_count])
+    if date > 8.days.ago
+      yoy_growth = calculate_yoy_growth_by_segment(date, values, read_yoy_growth)
+    else
+      yoy_growth = recalculate_yoy_growth_by_segment
+    end
+
+    save_values(values)
+    save_yoy_growth(yoy_growth)
+  end
+
+  def redis_key_values
+    "admin:business:new_users_by_segment:values"
+  end
+
+  def redis_key_yoy_growth
+    "admin:business:new_users_by_segment:growth"
+  end
+
+  def current_start_date
+    current_end_date - 30.days
+  end
+
+  def find_new_users
+    find_new_users_at(current_start_date, current_end_date)
+  end
+
+  def find_new_users_at(start_date, end_date)
+    User.full_user_owners.
+      where("created_at > ?", start_date).
+      where("created_at <= ?", end_date)
+  end
+
+  def count_types(users)
+    professional_count, k12_count, higher_ed_count = 0, 0, 0
+    users.each do |user|
+      if user.k12?
+        k12_count += 1
+      elsif user.higher_ed?
+        higher_ed_count += 1
+      else
+        professional_count += 1
+      end
+    end
+    [ professional_count, k12_count, higher_ed_count ]
+  end
+end

@@ -1,0 +1,34 @@
+require 'spec_helper'
+
+describe Kpi::PollsRecentlyUpdated, :type => :model do
+  let(:instance){ Kpi::PollsRecentlyUpdated.new }
+
+  describe "process!" do
+    it "performs the query and returns an array of results" do
+      values = instance.process!
+      expect(values).to be_an(Array)
+      expect(values.map{ |v| v["name"] }).to match_array(
+        %w(Discourse FreeTextPoll MultipleChoicePoll Total))
+      expect(values.detect{ |v| v["name"] == "Discourse" }["data"]).to eql([1])
+    end
+
+    it "handles missing data in queries by attaching zeros to results" do
+      kpi = instance
+
+      runs = {"last_run" => "2014-11-23",
+              "categories" => ["11-14"],
+              "series" => [{"name" => "MultipleChoicePoll", "data" => [1]}]}
+      kpi.expects(:get).returns(runs.to_json)
+
+      query = [OpenStruct.new({'count' => 1, 'type' => "Discourse"}),
+               OpenStruct.new({'count' => 1, 'type' => "FreeTextPoll"})]
+      kpi.expects(:query).returns(query)
+      values = kpi.process!
+      expect(values).to be_an(Array)
+      expect(values.map{ |v| v["name"] }).to match_array(
+        %w(Discourse FreeTextPoll MultipleChoicePoll Total))
+      expect(values.detect{ |v| v["name"] == "Discourse" }["data"]).to eql([0, 1])
+      expect(values.detect{ |v| v["name"] == "MultipleChoicePoll" }["data"]).to eql([1,0])
+    end
+  end
+end

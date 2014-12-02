@@ -1,0 +1,593 @@
+module SeedMe
+  def plans
+    # TODO: get rid of the old/new plan distinction once the new plans are in
+    # prod.
+    old_plans
+    new_plans
+  end
+
+  def old_plans
+    # Build out the plans to match what is in production.
+    PlanSet.create! :name => 'Business & Non-profit', :description => "The publicly facing retail Poll Everywhere plans", :self_serviceable => true, :permalink => 'retail' do |ps|
+      ps.id = 1
+
+      ps.plans.build :name => 'Platinum',
+        :maximum_votes_per_poll => 20000,
+        :maximum_users => 10,
+        :custom_keywords => true,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => '24x7 By Appt <a href="javascript:void(0)" tip="We offer 24x7 support on Platinum plans by appointment only. Email IAmACustomer@polleverywhere.com to schedule support outside of Pacific Time business hours." class="left_tip">(?)</a>',
+        :position => 1,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :comparison_reporting => true do |p|
+          p.id = 22
+          p.billing_cycles.build :price => 1400.00, :duration => '30.days', :plan => p
+        end
+      ps.plans.build :name => 'Conference',
+        :maximum_votes_per_poll => 2500,
+        :maximum_users => 8,
+        :custom_keywords => true,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => 'Phone <a href="javascript:void(0)" tip="Hours for support are 8 AM to 8 PM Eastern Time. Calls outside those hours may or may not be answered and are typically returned within 1 hour on normal business days and within 1 business day on non-business days." class="left_tip">(?)</a>',
+        :position => 2,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :comparison_reporting => true do |p|
+          p.id = 21
+          p.billing_cycles.build :price => 375.00, :duration => '30.days', :plan => p
+          p.billing_cycles.build :price => 3960.00, :duration => '1.year', :plan => p
+        end
+      ps.plans.build :name => 'Plenary',
+        :maximum_votes_per_poll => 700,
+        :maximum_users => 4,
+        :custom_keywords => true,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => 'Phone <a href="javascript:void(0)" tip="Hours for support are 8 AM to 8 PM Eastern Time. Calls outside those hours may or may not be answered and are typically returned within 1 hour on normal business days and within 1 business day on non-business days." class="left_tip">(?)</a>',
+        :position => 3,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :comparison_reporting => false do |p|
+          p.id = 20
+          p.billing_cycles.build :price => 140.00, :duration => '30.days', :plan => p
+          p.billing_cycles.build :price => 1478.00, :duration => '1.year', :plan => p
+        end
+      ps.plans.build :name => 'Presenter',
+        :maximum_votes_per_poll => 250,
+        :maximum_users => 2,
+        :custom_keywords => true,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => "Email",
+        :position => 4,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :comparison_reporting => false do |p|
+          p.id = 19
+          p.billing_cycles.build :price => 65.00, :duration => '30.days', :plan => p
+          p.billing_cycles.build :price => 686.00, :duration => '1.year', :plan => p
+        end
+      ps.plans.build :name => 'Personal',
+        :maximum_votes_per_poll => 50,
+        :maximum_users => 1,
+        :custom_keywords => false,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => "Email",
+        :position => 7,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => false,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :comparison_reporting => false do |p|
+          p.id = 18
+          p.billing_cycles.build :price => 15.00, :duration => '30.days', :plan => p
+          p.billing_cycles.build :price => 158.00, :duration => '1.year', :plan => p
+        end
+      ps.plans.build :name => 'Free',
+        :maximum_votes_per_poll => 40,
+        :maximum_users => 1,
+        :custom_keywords => false,
+        :description => "Our free plan",
+        :support => "FAQ",
+        :position => 8,
+        :reports => false,
+        :custom_confirmations => false,
+        :web_branded => true,
+        :salable => true,
+        :moderation => false,
+        :participant_reporting => false,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => false,
+        :participant_price => 0,
+        :comparison_reporting => false do |p|
+          p.id = 6
+        end
+      ps.plans.build :name => 'Free Trial',
+        :maximum_votes_per_poll => 40,
+        :maximum_users => 1,
+        :custom_keywords => false,
+        :description => "Used to temporarily give a user a free trial. The plan itself matches the free plan, but the user's account will be modified to have extra features. When the trial is over, the user will be downgraded back to the standard free plan, resetting the customized features.",
+        :support => "FAQ",
+        :position => 9,
+        :reports => false,
+        :custom_confirmations => false,
+        :web_branded => true,
+        :salable => false,
+        :moderation => false,
+        :participant_reporting => false,
+        :self_serviceable => false,
+        :sms_confirmations => true,
+        :grading => false,
+        :participant_price => 0,
+        :comparison_reporting => false do |p|
+          p.id = 49
+        end
+    end
+
+    PlanSet.create! :name => 'Higher Education', :self_serviceable => true, :permalink => 'classroom_response_system_higher_ed' do |ps|
+      ps.id = 3
+
+      ps.plans.build :name => 'Individual Instructor',
+        :maximum_votes_per_poll => 400,
+        :maximum_users => 1,
+        :custom_keywords => true,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => "FAQ, Email",
+        :position => 2,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :special_pricing => '$349/<small>semester</small><br/>$649/<small>year</small>',
+        :comparison_reporting => true do |p|
+          p.id = 29
+          p.billing_cycles.build :price => 349.00, :duration => '6.months', :plan => p
+          p.billing_cycles.build :price => 649.00, :duration => '1.year', :plan => p
+        end
+      ps.plans.build :name => 'Higher Ed Free',
+        :maximum_votes_per_poll => 40,
+        :maximum_users => 1,
+        :custom_keywords => false,
+        :description => "",
+        :support => "FAQ",
+        :position => 4,
+        :reports => false,
+        :custom_confirmations => false,
+        :web_branded => true,
+        :salable => true,
+        :moderation => false,
+        :participant_reporting => false,
+        :self_serviceable => true,
+        :sms_confirmations => false,
+        :grading => false,
+        :participant_price => 0,
+        :special_pricing => '&nbsp;',
+        :comparison_reporting => false do |p|
+          p.id = 30
+        end
+      ps.plans.build :name => 'University-wide',
+        :maximum_votes_per_poll => 1000,
+        :maximum_users => -1,
+        :custom_keywords => false,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => "Tier 2 Support",
+        :position => 0,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => false,
+        :sms_confirmations => false,
+        :grading => true,
+        :participant_price => 0,
+        :special_pricing => '<small>Minimum 200 students</small>',
+        :comparison_reporting => true do |p|
+          p.id = 37
+        end
+      ps.plans.build :name => 'Student Pays',
+        :maximum_votes_per_poll => -1,
+        :maximum_users => 10,
+        :custom_keywords => false,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => "FAQ, Email",
+        :position => 1,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 14,
+        :special_pricing => 'Each student pays $14',
+        :comparison_reporting => true do |p|
+          p.id = 39
+        end
+    end
+
+    PlanSet.create! :name => 'K12', :self_serviceable => true, :permalink => 'classroom_response_system_k12' do |ps|
+      ps.id = 2
+
+      ps.plans.build :name => 'School-wide',
+        :maximum_votes_per_poll => -1,
+        :maximum_users => -1,
+        :custom_keywords => false,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => "Tier 2 Support",
+        :position => 5,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => false,
+        :sms_confirmations => false,
+        :grading => true,
+        :participant_price => 0,
+        :special_pricing => '$2,000+/<small>year</small>',
+        :comparison_reporting => true do |p|
+          p.id = 35
+        end
+      ps.plans.build :name => 'Individual Teacher',
+        :maximum_votes_per_poll => 40,
+        :maximum_users => 1,
+        :custom_keywords => false,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => "FAQ, Email",
+        :position => 6,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :special_pricing => '<strong>$50</strong>/<small>year</small>',
+        :comparison_reporting => true do |p|
+          p.id = 33
+          p.billing_cycles.build :price => 50.00, :duration => '1.year', :plan => p
+        end
+      ps.plans.build :name => 'K-12 Free',
+        :maximum_votes_per_poll => 40,
+        :maximum_users => 1,
+        :custom_keywords => false,
+        :description => "",
+        :support => "FAQ",
+        :position => 7,
+        :reports => false,
+        :custom_confirmations => false,
+        :web_branded => true,
+        :salable => true,
+        :moderation => false,
+        :participant_reporting => false,
+        :self_serviceable => true,
+        :sms_confirmations => false,
+        :grading => false,
+        :participant_price => 0,
+        :special_pricing => '',
+        :comparison_reporting => false do |p|
+          p.id = 27
+        end
+    end
+  end
+
+  def new_plans
+    PlanSet.create! :name => 'Business & Non-profit',
+                    :description => "The publicly facing retail Poll Everywhere plans",
+                    :self_serviceable => true,
+                    :permalink => 'retail4' do |ps|
+
+      ps.plans.build :name => 'Free',
+        :maximum_votes_per_poll => 25,
+        :maximum_users => 1,
+        :custom_keywords => false,
+        :description => "Our free plan",
+        :support => "FAQ",
+        :position => 8,
+        :reports => false,
+        :custom_confirmations => false,
+        :web_branded => true,
+        :salable => true,
+        :moderation => false,
+        :participant_reporting => false,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => false,
+        :participant_price => 0,
+        :comparison_reporting => false
+
+      ps.plans.build :name => 'Breakout',
+        :maximum_votes_per_poll => 50,
+        :maximum_users => 1,
+        :custom_keywords => false,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => "Email",
+        :position => 7,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => false,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :comparison_reporting => false do |p|
+          p.billing_cycles.build :price => 19.00, :duration => '30.days', :plan => p
+          p.billing_cycles.build :price => 120.00, :duration => '1.year', :plan => p
+        end
+
+      ps.plans.build :name => 'Townhall',
+        :maximum_votes_per_poll => 200,
+        :maximum_users => 1,
+        :custom_keywords => false,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => 'Phone <a href="javascript:void(0)" tip="Hours for support are 8 AM to 8 PM Eastern Time. Calls outside those hours may or may not be answered and are typically returned within 1 hour on normal business days and within 1 business day on non-business days." class="left_tip">(?)</a>',
+        :position => 4,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :comparison_reporting => false do |p|
+          p.billing_cycles.build :price => 99.00, :duration => '30.days', :plan => p
+          p.billing_cycles.build :price => 599.00, :duration => '1.year', :plan => p
+        end
+
+      ps.plans.build :name => 'Ballroom',
+        :maximum_votes_per_poll => 500,
+        :maximum_users => 4,
+        :custom_keywords => true,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => 'Phone <a href="javascript:void(0)" tip="Hours for support are 8 AM to 8 PM Eastern Time. Calls outside those hours may or may not be answered and are typically returned within 1 hour on normal business days and within 1 business day on non-business days." class="left_tip">(?)</a>',
+        :position => 3,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :comparison_reporting => false do |p|
+          p.billing_cycles.build :price => 499.00, :duration => '30.days', :plan => p
+          p.billing_cycles.build :price => 2399.00, :duration => '1.year', :plan => p
+        end
+
+      ps.plans.build :name => 'Enterprise',
+        :maximum_votes_per_poll => 2000,
+        :maximum_users => 8,
+        :custom_keywords => true,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => 'Phone <a href="javascript:void(0)" tip="Hours for support are 8 AM to 8 PM Eastern Time. Calls outside those hours may or may not be answered and are typically returned within 1 hour on normal business days and within 1 business day on non-business days." class="left_tip">(?)</a>',
+        :position => 2,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :comparison_reporting => true do |p|
+          p.billing_cycles.build :price => 1999.00, :duration => '30.days', :plan => p
+        end
+    end
+
+
+    PlanSet.create! :name => 'Business & Non-profit',
+                    :description => "The publicly facing retail Poll Everywhere plans",
+                    :self_serviceable => true,
+                    :permalink => 'retail5' do |ps|
+
+      ps.plans.build :name => 'Free',
+        :maximum_votes_per_poll => 25,
+        :maximum_users => 1,
+        :custom_keywords => false,
+        :description => "Our free plan",
+        :support => "FAQ",
+        :position => 8,
+        :reports => false,
+        :custom_confirmations => false,
+        :web_branded => true,
+        :salable => true,
+        :moderation => false,
+        :participant_reporting => false,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => false,
+        :participant_price => 0,
+        :comparison_reporting => false
+
+      ps.plans.build :name => 'Meeting',
+        :maximum_votes_per_poll => 50,
+        :maximum_users => 1,
+        :custom_keywords => false,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => "Email",
+        :position => 7,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => false,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :comparison_reporting => false do |p|
+          p.billing_cycles.build :price => 19.00, :duration => '30.days', :plan => p
+          p.billing_cycles.build :price => 120.00, :duration => '1.year', :plan => p
+        end
+
+      ps.plans.build :name => 'Assembly',
+        :maximum_votes_per_poll => 100,
+        :maximum_users => 1,
+        :custom_keywords => false,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => "Email",
+        :position => 4,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :comparison_reporting => false do |p|
+          p.billing_cycles.build :price => 79.00, :duration => '30.days', :plan => p
+          p.billing_cycles.build :price => 499.00, :duration => '1.year', :plan => p
+        end
+
+      ps.plans.build :name => 'Convention',
+        :maximum_votes_per_poll => 200,
+        :maximum_users => 1,
+        :custom_keywords => false,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => 'Phone <a href="javascript:void(0)" tip="Hours for support are 8 AM to 8 PM Eastern Time. Calls outside those hours may or may not be answered and are typically returned within 1 hour on normal business days and within 1 business day on non-business days." class="left_tip">(?)</a>',
+        :position => 3,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :comparison_reporting => false do |p|
+          p.billing_cycles.build :price => 199.00, :duration => '30.days', :plan => p
+          p.billing_cycles.build :price => 999.00, :duration => '1.year', :plan => p
+        end
+
+      ps.plans.build :name => 'Summit',
+        :maximum_votes_per_poll => 500,
+        :maximum_users => 4,
+        :custom_keywords => true,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => 'Phone <a href="javascript:void(0)" tip="Hours for support are 8 AM to 8 PM Eastern Time. Calls outside those hours may or may not be answered and are typically returned within 1 hour on normal business days and within 1 business day on non-business days." class="left_tip">(?)</a>',
+        :position => 2,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :comparison_reporting => true do |p|
+          p.billing_cycles.build :price => 499.00, :duration => '30.days', :plan => p
+          p.billing_cycles.build :price => 2399.00, :duration => '1.year', :plan => p
+        end
+
+      ps.plans.build :name => 'Enterprise',
+        :maximum_votes_per_poll => 2000,
+        :maximum_users => 4,
+        :custom_keywords => true,
+        :custom_session_keywords => true,
+        :description => "",
+        :support => 'Phone <a href="javascript:void(0)" tip="Hours for support are 8 AM to 8 PM Eastern Time. Calls outside those hours may or may not be answered and are typically returned within 1 hour on normal business days and within 1 business day on non-business days." class="left_tip">(?)</a>',
+        :position => 2,
+        :reports => true,
+        :custom_confirmations => true,
+        :web_branded => false,
+        :salable => true,
+        :moderation => true,
+        :participant_reporting => true,
+        :self_serviceable => true,
+        :sms_confirmations => true,
+        :grading => true,
+        :participant_price => 0,
+        :comparison_reporting => true do |p|
+          p.billing_cycles.build :price => 1999.00, :duration => '30.days', :plan => p
+        end
+    end
+  end
+end

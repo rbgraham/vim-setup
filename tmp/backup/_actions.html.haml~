@@ -1,0 +1,12 @@
+-widget 'Account' do
+  =link_to "Edit Account", edit_admin_account_path(@account)
+-widget 'Users' do
+  =link_to "Show Users (#{@account.registered_users.count})", "#users"
+-widget 'Participants' do
+  =link_to "Show Participants (#{@account.memberships.count})", memberships_admin_account_path(@account)
+-widget 'Orders' do
+  =link_to "View Account Orders", admin_orders_path(:account => @account)
+-widget 'Account usage report' do
+  =link_to 'Usage report', usage_admin_account_path(@account)
+  =link_to 'Usage + Quotas report', usage_admin_account_path(@account, :quotas => 'true')
+=render :partial => 'admin/shared/widgets/notes', :locals => { :noteable => @account }

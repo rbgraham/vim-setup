@@ -1,0 +1,60 @@
+require_relative "../closeio"
+require_relative "lead"
+require_relative "search"
+require_relative "opportunities"
+require "json"
+
+# Working with collections of leads.
+# Searching for leads.
+# Creating new leads.
+class Closeio::Leads
+  attr_reader :api, :searcher
+
+  def initialize(api=Closeio.api.new("lead"))
+    @api = api
+  end
+
+  def search(query)
+    @searcher = Closeio::Search.new
+    @searcher.search(query)
+    @searcher.data
+  end
+
+  # NOTE: We are trusting that the Rails app only provides Integers as the
+  #       Account ID.
+  def find_by_z_account_id(z_account_id)
+    leads = search("z_account_id:\"#{z_account_id}\" sort:-updated")
+    # Since we used quotes (") in our search, we can be confident that we only
+    # got 1 result, assuming we don't accidentally use the same Account ID for
+    # two different leads.
+    # TODO: Raise an exception if there is more than one result. That means we
+    #       have invalid data in close.io that probably needs to be fixed
+    #       manually.
+    leads[0] && Closeio::Lead.new(leads[0])
+  end
+
+  # NOTE: We are trusting that the Rails app provides sanitized email addresses.
+  #       In theory a user could do some injection that would mess up our Close.io
+  #       search by entering an invalid email address.
+  def find_by_email(email)
+    leads = search("email:\"#{email}\" sort:-updated")
+    # Since we used quotes (") in our search so Close.io doesn't do a partial
+    # match on the email.
+    # NOTE: I have confirmed with Justin that duplicate emails are expected.
+    # TODO: This about the best algorithm for choosing the "right" lead when
+    #       there are duplicates.
+    #       Choosing the most recently updated one is probably best.
+    #       Maybe I should choose the most recently updated that doesn't
+    #       already have z_account_id set.
+    #       Maybe I should never deal with these duplicates. I could just log
+    #       the issue and look into things if/when Justin complaints.
+    leads[0] && Closeio::Lead.new(leads[0])
+  end
+
+  # Creates a new lead in Close.io and returns a Lead.
+  def create(lead_hash)
+    # TODO: Add some error handling
+    response = api.post(lead_hash)
+    Closeio::Lead.new(JSON.parse(response.body))
+  end
+end

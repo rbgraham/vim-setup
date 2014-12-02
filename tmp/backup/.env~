@@ -1,0 +1,27 @@
+# This file describes the various ENV variables used by this project.
+
+# API key for accessing Close.io.
+CLOSEIO_API_KEY=67ba0acef76cd07539073d0d9e10678d7eb728cc1c30eeb5d25fbe70
+
+# Rails App Database
+DATABASE_URL="mysql2://root:@127.0.0.1/polleverywhere_development?reconnect=true&encoding=utf8"
+
+# Point to the polleverywhere app.
+# Used for generating links within close.io to our admin pages.
+POLLEVERYWHERE_DOMAIN="www.polleverywhere.com"
+
+LOG_LEVEL="INFO"
+
+# Number of hours ago to look when importing new accounts with `scripts/add_new_users.rb`.
+# Defaults to 1 hour ago.
+HOURS_AGO="1"
+
+# If this is set to "true" then any potentially destructive API requests to
+# Close.io will not occur. The requests will be logged and the responses
+# will be mocked/faked.
+# Defaults to false.
+CLOSEIO_READONLY="true"
+
+# This should be set to the API key for our "Schedule" project
+# See https://polleverywhere.airbrake.io/projects/88249/edit
+AIRBRAKE_API_KEY=fd29146eac93de5879aa0ae7243309928e6da4a6

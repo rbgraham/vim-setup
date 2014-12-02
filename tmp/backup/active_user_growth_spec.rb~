@@ -1,0 +1,162 @@
+require 'spec_helper'
+
+describe Kpi::ActiveUserGrowth do
+  before do
+    # doesn't work without seeding some initial data
+    instance.save_values(existing_redis_data)
+  end
+
+  let(:existing_redis_data) do
+    end_date = Date.new(2009, 7, 21)
+    start_date = end_date - 1.year
+    (start_date..end_date).map.with_index do |date, i|
+      [ date.strftime("%d-%m-%Y"), i ]
+    end.reverse
+  end
+
+  let(:redis_data_with_gaps) do
+    end_date = Date.new(2009, 7, 21)
+    start_date = end_date - 1.week
+    (start_date..end_date).map.with_index do |date, i|
+      (i % 2) == 0 ? [ date.strftime("%d-%m-%Y"), i ] : nil
+    end.compact.reverse
+  end
+
+  let(:gaps) do
+    end_date = Date.new(2009, 7, 21)
+    start_date = end_date - 1.week
+    (start_date..end_date).map.with_index do |date, i|
+      (i % 2) != 0 ?  date : nil
+    end.compact.reverse.slice(1,7)
+  end
+
+  let(:instance){ Kpi::ActiveUserGrowth.new }
+
+  shared_examples "no changes necessary in redis" do
+    before do
+      Timecop.freeze Time.utc(2009, 7, 22)
+    end
+    after do
+      Timecop.return
+    end
+    it "does not update data in Redis" do
+      expect{ instance.values_json }.to_not change{ instance.read_values }
+    end
+    it "returns highcharts representation of values" do
+      values = JSON.parse(instance.values_json)
+      active_user_data, yoy_growth_data = *values["series"].map{ |s| s["data"] }
+      expect(active_user_data.size).to eql(48)
+      expect(yoy_growth_data.size).to eql(48)
+    end
+  end
+
+  describe "values_json" do
+    context "ran yesterday" do
+      before do
+        Timecop.freeze Time.utc(2009, 7, 22)
+      end
+      after do
+        Timecop.return
+      end
+      it "does not update data in Redis" do
+        expect{ instance.values_json }.to_not change{ instance.read_values }
+      end
+      it "returns highcharts representation of values" do
+        values = JSON.parse(instance.values_json)
+        active_user_data, yoy_growth_data = *values["series"].map{ |s| s["data"] }
+        expect(active_user_data.size).to eql(48)
+        expect(yoy_growth_data.size).to eql(48)
+      end
+    end
+    context "not ran yesterday" do
+      before do
+        Timecop.freeze(Time.utc(2009, 7, 23))
+        # stub Google Analytics login
+        google_profile_stub = Object.new
+        Analytic.expects(:profile).returns(google_profile_stub)
+        Analytic::Actives.expects(:results).with{ |profile, opts|
+          profile == google_profile_stub &&
+          opts[:segment_id] == Kpi::ActiveUserGrowth::SEGMENT_ID &&
+          opts[:start_date] == Time.utc(2009, 7, 20) &&
+          opts[:end_date] == Time.utc(2009, 7, 22)
+        }.returns([OpenStruct.new(:month => 7, :day => 22, :year => 2009, :visitors => 1234)])
+      end
+      after do
+        Timecop.return
+      end
+      it "updates data in Redis" do
+        old_values = instance.read_values
+        instance.values_json
+        new_values = instance.read_values
+        expect(new_values).to eql([["22-7-2009",1234]] + old_values)
+      end
+      it "returns highcharts representation of values" do
+        values = JSON.parse(instance.values_json)
+        active_user_data, yoy_growth_data = *values["series"].map{ |s| s["data"] }
+        expect(active_user_data.size).to eql(49)
+        expect(yoy_growth_data.size).to eql(49)
+      end
+    end
+    context "days are missing" do
+      before do
+        instance.save_values(redis_data_with_gaps)
+        Timecop.freeze(Time.utc(2009, 7, 22))
+      end
+      after do
+        Timecop.return
+      end
+      it "adds data for missing days" do
+        # stub Google Analytics login
+        google_profile_stub = Object.new
+        Analytic.stubs(:profile).returns(google_profile_stub)
+
+        instance.expects(:query_ga).with(Time.utc(2009, 7, 19), Time.utc(2009, 7, 21)).
+            returns([OpenStruct.new(:day => 21, :month => 7, :year => 2009, :visitors => 1234)])
+        instance.expects(:query_ga).with(Time.utc(2009, 7, 16), Time.utc(2009, 7, 19)).
+            returns([OpenStruct.new(:day => 19, :month => 7, :year => 2009, :visitors => 1234)])
+        instance.expects(:query_ga).with(Time.utc(2009, 7, 14), Time.utc(2009, 7, 17)).
+            returns([OpenStruct.new(:day => 17, :month => 7, :year => 2009, :visitors => 1234)])
+        instance.expects(:query_ga).with(Time.utc(2009, 7, 12), Time.utc(2009, 7, 15)).
+            returns([OpenStruct.new(:day => 15, :month => 7, :year => 2009, :visitors => 1234)])
+
+        instance.values_json
+        expect(instance.missing_days).to be_empty
+      end
+    end
+  end
+  describe "missing_days" do
+    context "no days are missing" do
+      it_behaves_like "no changes necessary in redis"
+    end
+    context "days are missing" do
+      before do
+        instance.save_values(redis_data_with_gaps)
+        Timecop.freeze(Time.utc(2009, 7, 22))
+      end
+      after do
+        Timecop.return
+      end
+
+      it "returns the missing days" do
+        expect(instance.missing_days).to eql(gaps)
+      end
+    end
+  end
+  describe "index_for_missing_date" do
+    context "no days are missing" do
+      it "returns 0" do
+        expect(instance.index_for_missing_date(Date.parse("22-07-2009"), existing_redis_data)).to eql(0)
+      end
+    end
+
+    context "days are missing" do
+      it "returns the correct chronological index" do
+        instance.save_values(redis_data_with_gaps)
+        expect(instance.index_for_missing_date(Date.parse("13-07-2009"), redis_data_with_gaps)).to eql(4)
+        expect(instance.index_for_missing_date(Date.parse("15-07-2009"), redis_data_with_gaps)).to eql(3)
+        expect(instance.index_for_missing_date(Date.parse("17-07-2009"), redis_data_with_gaps)).to eql(2)
+        expect(instance.index_for_missing_date(Date.parse("19-07-2009"), redis_data_with_gaps)).to eql(1)
+      end
+    end
+  end
+end

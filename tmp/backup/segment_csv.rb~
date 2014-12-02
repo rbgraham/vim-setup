@@ -1,0 +1,58 @@
+require 'csv'
+
+block = 10000
+total = User.where("created_at > ? AND created_at < ?", Date.parse("15-10-2012"), Date.parse("15-10-2014")).count
+
+def write_user_segment_data_to_csv(block, offset)
+  count = 0
+  res = { :higher_ed => [], :professional => [], :k12 => [] }
+  
+  User.where("created_at > ? AND created_at < ?", Date.parse("15-10-2012"), Date.parse("15-10-2014")).order(:created_at).limit(block).offset(offset).each { |u| count += 1; puts count; res[u.segment] << u.id };0
+  [:professional, :higher_ed, :k12].each do |segment|
+    CSV.open("users_by_segment_past_2y_#{segment}.csv", "a") do |csv|
+      res[segment].each_with_index do |i, index|
+        csv << [i]
+      end
+    end
+  end
+end
+
+#write_user_segment_data_to_csv(block, 0)
+
+offset = 0
+while offset < total do 
+  write_user_segment_data_to_csv(block, offset)
+  offset += block
+  puts "Working on #{offset}-#{offset+block} of #{total}. #{(offset.to_f/total * 100).to_i}%"
+end
+
+######### PAID
+
+block = 100
+query = Order.joins("LEFT JOIN users u ON orders.subject_id=u.account_id AND orders.subject_type = 'Account' AND u.account_relationship = 2").where(:state => 'paid')
+total = query.count
+
+def write_user_segment_data_to_csv(block, offset)
+  count = 0
+  res = { :higher_ed => [], :professional => [], :k12 => [] }
+  
+  query.limit(block).offset(offset).each { |o| next if o.user_id.nil?; count += 1; puts count; res[o.user.segment] << o.user_id };0
+  [:professional, :higher_ed, :k12].each do |segment|
+    CSV.open("paid_users_by_segment_past_2y_#{segment}.csv", "a") do |csv|
+      res[segment].each_with_index do |i, index|
+        csv << [i]
+      end
+    end
+  end
+end
+
+
+offset = 0
+while offset < total do 
+  puts "Working on #{offset}-#{offset+block} of #{total}. #{(offset.to_f/total * 100).to_i}%"
+  write_user_segment_data_to_csv(block, offset)
+  offset += block
+end
+puts "Completed."
+
+Working on 38000-40000 of 121848. 31%

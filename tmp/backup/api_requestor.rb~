@@ -1,0 +1,57 @@
+require_relative "../closeio"
+require "json"
+require "httparty"
+require "cgi"
+
+# Class for making HTTP requests to Close.io.
+class Closeio::ApiRequestor
+  # TODO: Pass all this stuff as options to the initializer.
+  #       Read the ENV vars as needed in lib/api.rb.
+  # These constants are split out to make testing easier.
+  HOST = "app.close.io".freeze
+  PATH = "/api/v1".freeze
+  BASE_URL = "https://#{HOST}#{PATH}".freeze
+  AUTH = {:username => ENV["CLOSEIO_API_KEY"], :password => ""}
+
+  GET_OPTIONS = {
+    :headers => {"Accept" => "application/json"},
+    :basic_auth => AUTH
+  }.freeze
+
+  WRITE_OPTIONS = {
+    :headers => {"Content-Type" => "application/json"},
+    :basic_auth => AUTH
+  }.freeze
+
+
+  def initialize(type)
+    @type = type
+  end
+
+  def get(query, skip = 0, limit = 100)
+    query = CGI.escape query
+    skip = CGI.escape skip.to_i.to_s
+    limit = CGI.escape limit.to_i.to_s
+    puts "#{url}?query=#{query}&_limit=#{limit}&_skip=#{skip}"
+    HTTParty.get("#{url}?query=#{query}&_limit=#{limit}&_skip=#{skip}", GET_OPTIONS)
+  end
+
+  def post(body_hash)
+    HTTParty.post url, write_options(body_hash)
+  end
+
+  def put(id, body_hash)
+    HTTParty.put url(id), write_options(body_hash)
+  end
+
+  # You'd think these would be private, but our Readonly class accesses them.
+  def url(id=nil)
+    val = "#{BASE_URL}/#{@type}/"
+    val += id + '/' if id
+    val
+  end
+  def write_options(body_hash)
+    json = JSON.generate(body_hash)
+    WRITE_OPTIONS.merge(:body => json)
+  end
+end

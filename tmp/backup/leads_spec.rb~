@@ -1,0 +1,129 @@
+require_relative "../spec_helper"
+require_relative "../../lib/closeio/leads"
+require_relative "../../lib/closeio/lead"
+require "json"
+
+describe Closeio::Leads do
+  subject { Closeio::Leads.new }
+
+  describe "#search" do
+    before :each do
+      @data = {'one' => 1}
+      resp = {body: {data: @data, has_more: false, total_results: 1}.to_json, headers: {}}
+      stub_request(:get, "https://abc123:@app.close.io/api/v1/lead/?_skip=0&_limit=100&query=my%20search").with(:headers => {'Accept' => 'application/json'}).
+        to_return(resp)
+    end
+    it "returns the data from the body" do
+      expect(subject.search("my search")).to eq(@data)
+    end
+  end
+
+
+  describe "#find_by_z_account_id" do
+    it "calls .search for the z_account_id" do
+      expect(subject).to receive(:search).with(/z_account_id:"123"/) { [{}] }
+      subject.find_by_z_account_id(123)
+    end
+
+    it "sorts the .search with most recently updated first" do
+      expect(subject).to receive(:search).with(/sort:-updated/) { [{}] }
+      subject.find_by_z_account_id(123)
+    end
+
+    context "no search results found" do
+      it "returns nil" do
+        allow(subject).to receive(:search) { [] }
+        expect(subject.find_by_z_account_id(123)).to eq(nil)
+      end
+    end
+
+    context "one search result found" do
+      it "returns a Lead for the 1st search result" do
+        attrs = { "name" => "Fred Flintstone", "id" => "lead_abc123" }
+        allow(subject).to receive(:search) { [attrs] }
+        expect(subject.find_by_z_account_id(123)).to eq(Closeio::Lead.new(attrs))
+      end
+    end
+
+    context "two search results found" do
+      it "returns a Lead for first result" do
+        attrs1 = {"id" => "lead_abc123"}
+        attrs2 = {"id" => "lead_xyz987"}
+
+        allow(subject).to receive(:search) { [attrs1, attrs2] }
+        lead1 = Closeio::Lead.new attrs1
+        lead2 = Closeio::Lead.new attrs2
+
+        expect(subject.find_by_z_account_id("a@b.ca")).to eq(lead1)
+        expect(subject.find_by_z_account_id("a@b.ca")).not_to eq(lead2)
+      end
+
+      # TODO: Implement these
+      #it "logs a warning"
+      #it "notifies airbrake without raising an exception"
+    end
+  end
+
+
+  describe "#find_by_email" do
+    it "calls .search for the email" do
+      expect(subject).to receive(:search).with(/email:"a@b\.ca"/) { [{}] }
+      subject.find_by_email("a@b.ca")
+    end
+
+    it "sorts the .search with most recently updated first" do
+      expect(subject).to receive(:search).with(/sort:-updated/) { [{}] }
+      subject.find_by_email("a@b.ca")
+    end
+
+    context "no search results found" do
+      it "returns nil" do
+        allow(subject).to receive(:search) { [] }
+        expect(subject.find_by_email("a@b.ca")).to eq(nil)
+      end
+    end
+
+    context "one search result found" do
+      it "returns a Lead for the 1st search result" do
+        attrs = {"id" => "lead_abc123"}
+        allow(subject).to receive(:search) { [attrs] }
+        lead = Closeio::Lead.new attrs
+        expect(subject.find_by_email("a@b.ca")).to eq(lead)
+      end
+    end
+
+    context "two search results found" do
+      it "returns a Lead for first result" do
+        attrs1 = {"id" => "lead_abc123"}
+        attrs2 = {"id" => "lead_xyz987"}
+
+        allow(subject).to receive(:search) { [attrs1, attrs2] }
+        lead1 = Closeio::Lead.new attrs1
+        lead2 = Closeio::Lead.new attrs2
+
+        expect(subject.find_by_email("a@b.ca")).to eq(lead1)
+        expect(subject.find_by_email("a@b.ca")).not_to eq(lead2)
+      end
+
+      # TODO: Implement these
+      #it "logs a warning"
+    end
+  end
+
+
+  describe "#create" do
+    it "POSTs the given Hash" do
+      attrs = {"name" => "Acme Industries"}
+      expect(subject.api).to receive(:post).with(attrs) { double body: "{}" }
+      subject.create(attrs)
+    end
+
+    it "creates a new Lead from the respsonse body" do
+      resp = double body: '{"id": "lead_abc123", "name": "Acme"}'
+      allow(subject.api).to receive(:post) { resp }
+      lead = subject.create({})
+      expect(lead.id).to eq("lead_abc123")
+      expect(lead.attributes["name"]).to eq("Acme")
+    end
+  end
+end

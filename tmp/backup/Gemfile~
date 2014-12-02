@@ -1,0 +1,239 @@
+source "https://rubygems.org"
+
+gem "rails", "~> 4.0", :require => "rails/railtie"
+
+# Waiting on an official release that includes this fix:
+# https://github.com/rack/rack/pull/711
+gem "rack", :github => "polleverywhere/rack", :branch => "152"
+
+### configuration
+gem "dotenv", "~> 0.7"
+
+### Middlewares
+gem "rack-cors", "~> 0.2", :require => false
+gem "rack-utf8_sanitizer", ["~> 1.2", ">= 1.2.1"]
+gem "message_router"
+# Used to support Deloitte's XML-based participant updates via API.
+gem "actionpack-xml_parser"
+
+### authentication and authorization
+# waiting on https://github.com/stffn/declarative_authorization/pull/194
+gem "declarative_authorization", :github => "zeiv/declarative_authorization"
+gem "requirement_authorization"
+
+### Omniauth strategies
+gem "omniauth"
+gem "omniauth-saml"
+# Makes the fingerprint optional by default
+# Prevents https://polleverywhere.airbrake.io/projects/7346/groups/71777172
+gem "ruby-saml", github: "polleverywhere/ruby-saml", branch: "fingerprint_optional"
+gem "omniauth-twitter", "~> 1.0"
+gem "ims-lti", "~> 1.1" # Blackboard LMS auth
+
+### services
+gem "mysql2", "~> 0.3"
+gem "quebert", "~> 2.0"
+gem "redis", "~> 3.1"
+# Support Lua scripts in Redis. Our fork is waiting on some PRs
+gem "redis_scripts", :github => "polleverywhere/redis_scripts"
+gem "activemerchant", :require => "active_merchant", :path => "./lib/plugins/active_merchant"
+gem "mailchimp"
+# TODO extract our Quebert instrumentation into a separate gem using:
+# https://github.com/newrelic/extends_newrelic_rpm
+gem "rpm_contrib", :github => "polleverywhere/rpm_contrib"
+gem "newrelic_rpm", "~> 3.9"
+gem "newrelic-redis"
+gem "airbrake", "~> 4.0"
+# We need the Twitter gem for different purposes than the omniauth-twitter gem
+gem "twitter", "~> 5.11"
+gem "twitter-text", :require => false
+gem "aws-sdk", "~> 1.46", :require => "aws/s3"
+gem "canvas-api", "~> 0.7"
+gem "firehose", "~> 1.2.20"
+# Remove once 1) SMTP writer moved over to Quebert. 2) Full external beanstalk introspection
+# tool (depricate admin/queue). Also, there's a config file we can kill.
+gem "beanstalk-client", "~> 1.1"
+
+### active-record stuff
+gem "deep_cloning", "~> 2.0" # adds :include/:exclude to ActiveRecord::Base#dup
+gem "paranoia", "~> 2.0"
+# acts_as_state_machine replacement
+gem "aasm"
+# Our canonical way of setting default values for ActiveRecord models.
+gem "default_value_for", "~> 3.0"
+gem "aukan-bitmask"
+gem "acts_as_list"
+# ActiveRecord-like in-memory datasource
+# from source until merged https://github.com/zilkey/active_hash/pull/90
+gem "active_hash", :github => "PracticallyGreen/active_hash", :branch => "rails41", :require => false
+
+### view-layer stuff
+gem "rails-widgets", :require => "widgets", :github => "polleverywhere/rails-widgets" # tabnav
+gem "active_model_serializers"
+gem "will_paginate"
+gem "formtastic", "~> 2.3.0.rc3"
+gem "color", "~> 1.4", :require => "color/css" # used in application_methods
+gem "gradients", "~> 0.0"
+gem "prawn", "~> 0.12"
+# Used in the admin panel to provide basic CRUD actions
+gem "inherited_resources"
+#
+#### Welcome to hell.
+# See https://github.com/sstephenson/execjs#readme for more supported runtimes
+gem "therubyracer", "~> 0.12", :platforms => :ruby
+gem "execjs", "~> 1.4.0"
+gem "libv8", "~> 3.16"
+##### Sprockets
+# Sprockets 2.1.4 has two breaking changes over 2.1.3 (I know, so much for SemVer)
+# They raise an error when you double-call asset_path. So passing "assets/foo.jpg" into,
+# say, image_tag will now raise an error. We apparently do this all over the place in our sass files.
+# The other is some strange asset loading issue that Paul and I were not able to diagnose.
+# Since Rails doesn't require 2.1.4 we are locking on 2.1.3 until we absolutely must upgrade.
+gem "sprockets-rails", "2.1.3"
+gem "haml", "~> 4.0"
+gem "sass-rails"
+gem "compass-rails"
+gem "susy", "~> 1.0"
+gem "uglifier", "~> 1.2"
+gem "oily_png", "~> 1.0" # Used to speed up compass sprite generation
+gem "haml-sprockets", :github => "dharanasoft/haml-sprockets" # Used for the few remaining Hamljs templates
+gem "coffee-rails", "~> 4.0.0"
+gem "coffee-script", "~> 2.2"
+gem "haml_coffee_assets", "~> 1.13"
+# References our repository of assets that we share between mobile, visualizations, and this app.
+# This mostly includes fonts, but may include base JS files, etc. in the future. Do NOT put
+# large binary image assets in this repo. Oh, one more thing... this doesn't actually do anything
+# unless `//=require 'pollev_assets'` is referenced from a Sprockets file.
+gem "pollev_assets", "~> 0.0", :git => "git@github.com:polleverywhere/assets.git"
+# NOTE: JQuery-1.7.2 is vendored. Only jquery_ujs / jquery.rails is currently used.
+gem "jquery-rails"
+
+### parsers
+gem "nokogiri", "~> 1.5"
+gem "hpricot", "~> 0.8" # only used by lib/poll_import.rb
+gem "json", "~> 1.8"
+gem "rdiscount", "~> 1.6" # markdown
+# TODO - Justify with data why we should get this out of here, and research other web spider solutions for scraping.
+# TODO: Move functionality elsewhere.
+#   mechanize depends on mime-types >= 2.0 and
+#   the mail gem depends on mime-types ~> 1.16
+gem "mechanize", "~> 2.7"
+
+#### analytics
+gem "garb", :require => false # google anlytics
+# A/B Testing for Rails
+gem "split", "~> 0.7"
+gem "analytics-ruby", "~> 0.6", :require => false
+
+### utilities
+gem "descriptive_statistics", "~> 1.1", :require => false # adds stats methods to Enumerable
+gem "anybase", "~> 0.0"
+gem "scrypt", "~> 1.2", :require => false
+gem "sitemap_generator", "~> 4.3", :require => false
+gem "swearjar", "~> 1.0" # Swearjar.default.profane?
+# temp branch until we do proper HTML escaping
+gem "html_terminator", "~> 0.0", :github => "polleverywhere/html_terminator", :branch => "skip_one_bracket_sanitize"
+gem "htmlentities", "~> 4.2" # HTMLEntities.new.decode(string)
+# Used in default login generator to convert unicode to ascii.
+gem "stringex", :require => false
+# Used in the default login generator to create psuedorandom strings.
+gem "random_username"
+# Explicit thor version specified so foreman runs properly when specifying custom -e '.env'
+gem "thor"
+gem "lograge" # sane logging in Rails
+
+# Add emoji support. This gem has a rake task to load up all the emoji images.
+# It also has utility methods for switching between emoji names and their
+# unicode representation
+# Specifying this ref because the API has breaking changes after this.
+gem "gemoji", :github => "github/gemoji", :ref => "204ace7"
+
+# Used for parallel async firehose publishing
+gem "celluloid", :require => "celluloid/autostart"
+
+#### These gems we don't necessarily use inside the app, but we call their bins from command line, crontab, etc.
+gem "changelog", "~> 0.8", :require => false
+gem "rdoc", "~> 3.12", :require => false
+gem "rake", "~> 0.9", :require => false
+gem "thin", "~> 1.3", :require => false
+gem "whenever", :require => false # cron
+# You should NOT be running foreman via `bundle exec`. This entry is here for convience
+# so that folks who run `bundle install` get foreman installed.
+gem "foreman", :require => false
+# Perform long running migrations without taking the database offline
+gem "lhm", :require => false
+
+#### Compatibility: Rails 2.3 - 3.2
+# Support for error_messages_for in Rails 3
+gem "dynamic_form"
+
+#### Compatibility:: Rails 3.2 - 4.x
+# TODO: remove in favor of strong parameters
+# provides attr_protected, attr_accessible
+# when removed, remove
+# config.active_record.whitelist_attributes = false
+gem "protected_attributes", :require => false
+# TODO: remove in favor of cache_digest
+# provides caches_action, caches_page
+gem "actionpack-action_caching"
+
+gem "wolfpack", "~> 1.0" # run tests in parallel
+
+
+group :test, :development do
+  gem "pry"
+  gem "rainbows", "4.3.1" # for running firehose locally
+  gem "faye-websocket", "0.4.7"
+  gem "rspec-rails"
+  gem "rspec", "~> 2.99"
+  gem "guard-rspec", "~> 4.3"
+  gem "guard-bundler", "~> 2.0"
+  gem "rainbow", "~> 1.9"
+end
+
+group :development do
+  gem "capistrano", "~> 2.9" # capistrano-rails ?
+  gem "capistrano_colors", "~> 0.5"
+  gem "capistrano-ext", "~> 1.2" # TODO deprecated
+  gem "capistrano-deploytags"
+  gem "better_errors"
+  gem "binding_of_caller" # in-browser console on errors
+  gem "spring"
+  gem "spring-commands-rspec"
+  gem "dogapi", "~> 1.10.0"
+end
+
+group :test do
+  gem "launchy"
+  gem "timecop", "~> 0.5"
+  gem "rack-test"
+  gem "factory_girl"
+  gem "factory_girl_rails"
+  gem "mocha", "~> 0.12", :require => "mocha/api"
+  gem "rspec-collection_matchers", :require => false
+  gem "minitest" # required by shoulda-matchers
+  gem "shoulda-matchers"
+  gem "capybara"
+  gem "capybara-webkit"
+  # Takes a screenshot of the capybara page that fails.
+  gem "capybara-screenshot"
+  gem "poltergeist", "~> 1.3"
+  gem "webmock", "~> 1.8", :require => false
+  gem "database_cleaner", "~> 1.3", :require => false
+  gem "ci_reporter", "~> 1.9", :require => "ci/reporter/rake/rspec_loader"
+  gem "rspec_junit_formatter"
+  gem "jasmine-core", "1.3.1"
+  gem "jasmine-spec-extras", "~> 0.0"
+  gem "jasmine-headless-webkit", "0.9.0.rc.2" # Need the release candidate to get support for haml coffee assets
+  gem "selenium-webdriver", "~> 2.35"
+  gem "simplecov", "~> 0.7.0", :require => false
+  gem "codeclimate-test-reporter", :require => false
+  # As-per the documentation http://apidock.com/rails/v3.2.13/ActiveRecord/Transactions/ClassMethods/after_commit
+  # `after_commit` hooks don't work well when testing with transactional_fixtures.
+  # This gem solves the problem.
+  gem "test_after_commit"
+end
+
+group :profiler do
+  gem "rack-perftools_profiler", "~> 0.6", :require => "rack/perftools_profiler"
+end

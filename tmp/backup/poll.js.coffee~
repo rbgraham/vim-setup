@@ -1,0 +1,417 @@
+#= require mclexer
+
+# Models
+class window.Poll extends Backbone.Model
+  defaults:
+    group_id: null
+
+  modelProperties: [
+    "sequence"
+    "title"
+    "group_id"
+    "owner_id"
+    "state"
+    "sms_enabled"
+    "web_enabled"
+    "sharing_enabled"
+    "twitter_enabled"
+    "max_votes"
+    "flash_options"
+  ]
+
+  # temporary flag for save. doesn't really belong here. should find a better place.
+  resequence: false
+  initialize: ->
+    @archives = new ArchiveCollection
+    @archives.url = "/my/polls/" + @get("permalink") + "/archives"
+
+  parse: (json) =>
+    PollEv.Util.popRootKey json
+
+  start: (opts) =>
+    @toggle "state", opts, "opened"
+
+  stop: (opts) =>
+    @toggle "state", opts, "closed"
+
+  toggleState: (opts) =>
+    newState = (if @get("state") is "opened" then "closed" else "opened")
+    @toggle "state", opts, newState
+
+  toggleTwitterEnabled: (opts) =>
+    @toggle "twitter_enabled", opts
+
+  toggleSmsEnabled: (opts) =>
+    @toggle "sms_enabled", opts
+
+  toggleSharingEnabled: (opts) =>
+    @toggle "sharing_enabled", opts
+
+  toggleWebEnabled: (opts) =>
+    @toggle "web_enabled", opts
+
+  toggle: (attr, opts, val) =>
+    params = {}
+    params[attr] = ((if val then val else not @get(attr)))
+    opts or (opts = {})
+    opts.data or (opts.data = {})
+    opts.data[@model_type] = params
+    opts.processData = true
+    @save params, opts
+
+  isWebRespondable: =>
+    @get("state") is "opened" and @get("web_enabled")
+
+  # Get the voting instructions specific to a participant
+  votingInstructions: (participant) =>
+    msg = ""
+    if @isStopped()
+      msg = "This poll hasn't been started yet."
+    else unless @isWebEnabled()
+      msg = "Web Voting has not been turned on for this poll."
+    else unless @isRegisteredFor(participant)
+      msg = "This poll requires you to be registered with the presenter. See the presenter to find out how to get registered."
+    else if @get("max_votes")
+      responses = participant.resultsForPoll(this, false).size()
+      maxVotes = @get("max_votes")
+      remainingVotes = maxVotes - responses
+      if responses is 0
+        msg = "You can respond " + maxVotes + " " + Backbone.Rails.pluralize(maxVotes, "time")
+      else if responses >= maxVotes
+        msg = "You responded the maximum number of times to this poll"
+      else
+        msg = "You have " + remainingVotes + " " + Backbone.Rails.pluralize(remainingVotes, "response") + " remaining"
+    else msg = "Poll has received the maximum number of responses allowed."  if @get("state") is "maxed_out"
+    msg
+
+  isStopped: =>
+    @get("state") is "closed"
+
+  isWebEnabled: =>
+    @get "web_enabled"
+
+  isSharingEnabled: =>
+    @get "sharing_enabled"
+
+
+  # Figure out if this is web respondable for a participant. We need this so we can calculate
+  # if the participant has voted more than once, depending on the value of max_votes.
+  isWebRespondableFor: (participant) =>
+    not @hasMaximumResponses(participant) and @isRegisteredFor(participant) and @isWebRespondable()
+
+
+  # Determine if this participant is registered with the presenter of the poll
+  isRegisteredFor: (participant) =>
+    if @get("registered_participants_only") is true
+      accounts = participant.get("membership_ids")
+      accounts = new Array()  unless accounts
+      if $.inArray(@get("account_id"), accounts) > -1
+        true
+      else
+        false
+    else
+      true
+
+  hasMaximumResponses: (participant) =>
+    if @get("max_votes")
+      participant.resultsForPoll(this, false).size() >= @get("max_votes")
+    else
+      false # A max votes threshold wasn't set so assume unlimited
+
+  url: =>
+    base = "/" + @pluralize(@model_type)
+    (if @isNew() then base else base + "/" + @get("permalink"))
+
+  resultsUrl: =>
+    "/polls/" + @get("permalink") + "/results"
+
+  # This is preferrable to just @url because @url is what Backbone.sync uses for
+  # all its requests. In our models project (which we are starting to use within
+  # this rails app) @url will point to a JSON endpoint, not something a user will
+  # visit with a browser. @showUrl on the other hand is always meant to point to
+  # the URL a user would visit in a browser.
+  showUrl: =>
+    "/" + @pluralize(@model_type) + "/" + @get("permalink")
+
+  editUrl: =>
+    "/" + @pluralize(@model_type) + "/" + @get("permalink") + "/edit"
+
+  copyUrl: =>
+    "/" + @pluralize(@model_type) + "/" + @get("permalink") + "/copy"
+
+  clearUrl: =>
+    "/" + @pluralize(@model_type) + "/" + @get("permalink") + "/results/archive"
+
+  pluralize: (word) =>
+    word + "s"
+
+  toJSON: =>
+    # build a rails compatible model_type json object
+    obj = {}
+    obj[@model_type] = {}
+    _.each @modelProperties, ((key) ->
+      obj[@model_type][key] = @attributes[key]
+    ), this
+    obj[@model_type]["group_id"] = null  if obj[@model_type]["group_id"] is Group.defaultId
+    obj["resequence"] = @resequence  if @resequence
+    obj
+
+  group: =>
+    window.PollEverywhere.Groups.get(@get("group_id")) or @owner().ungroup
+
+  owner: =>
+    window.PollEverywhere.Users.get @get("owner_id")
+
+  moveToGroup: (group) =>
+    @set group_id: group.id
+
+  cleanTitle: =>
+    if title = @get("title")
+      console.log("CLEANING TITLE")
+      #title = _.string.stripTags(title)
+      title = _.string.clean(title)
+      title = title.replace(/\\n/ig, '')
+
+      return title
+    else
+      return ""
+
+  clear: (options) =>
+    model = this
+    success = options.success
+    options.success = (resp, status, xhr) ->
+      return false  unless model.set(model.parse(resp, xhr), options)
+      success model, resp, xhr  if success
+
+    options.url = @clearUrl()
+    Backbone.sync "delete", this, options
+
+  refreshArchives: =>
+    if @archives.models.length > 0
+      _.each @archives.pluck("id"), ((id) ->
+        @archives.remove @archives.get(id)
+      ), this
+    @archives.fetch()
+
+  # "Class" methods
+  @factory: (json) ->
+
+    # There may be cases where we bootstrap with a null JSON value, so just return nothing and get out of here.
+    return  unless json
+    attrs = PollEv.Util.popRootKey(json)
+    model_type = PollEv.Util.modelType(json)
+    switch model_type
+      when "multiple_choice_poll"
+        return new MultipleChoicePoll(attrs)
+      when "free_text_poll"
+        return new FreeTextPoll(attrs)
+      when "pledge_poll"
+        return new PledgePoll(attrs)
+      when 'discourse'
+        return new Discourse(attrs)
+      when 'clickable_image'
+        return new PollEv.Model.ClickableImage(attrs)
+      when 'ranking_poll'
+        return new PollEv.Model.RankingPoll(attrs)
+
+  @lex: (text) ->
+    # Main lexer
+    lexer = new McLexer.State()
+
+    # single quoted string
+    string1 = new McLexer.State()
+
+    # double quoted string
+    string2 = new McLexer.State()
+
+    # parse the poll answers
+    optionsLexer = new McLexer.State()
+
+    # To keep track of options
+    optionsBuffer = []
+
+    # keep track of tokens as we walk through string
+    tokens = []
+
+    # return values
+    question = false
+    answers = []
+
+    PARSER_LOGGER = false
+    # Uncomment this to enable debug logging
+    # PARSER_LOGGER = console
+
+    PARSER_LOGGER.log? "Parsing: #{text}"
+
+    # handlers
+    finishQuestionHandler = (match, rest, state) ->
+      token = match[0]
+
+      # Store the question mark
+      tokens.push token if _(['?', ':']).indexOf(token) >= 0
+
+      PARSER_LOGGER.log? "[END OF QUESTION], #{token}"
+
+      # set the question if it hasn't been set yet
+      # and empty out tokens
+      unless question
+        question = tokens.join('')
+
+      # jump into options
+      optionsLexer.run rest
+
+    pushToken = (match, rest, state) ->
+      tokens.push match[0]
+      state.continuation rest
+
+    # Rules.
+    lexer(/\'/) (match, rest, state) ->
+      string1.run rest
+
+    lexer(/\"/) (match, rest, state) ->
+      string2.run rest
+
+    # Question ending
+    # using the look ahead ? to filter
+    # out any periods that look like decimals
+    lexer(/(?!\d*.\d+)[:?.]/) finishQuestionHandler
+
+    # Token in question
+    lexer(/[^\'\"\s\:\?\.]+/) pushToken
+
+    # Space in question
+    lexer(/\s+/) pushToken
+
+    lexer(/$/) (match, rest, state) ->
+      # End of input. If not question has been found yet, use original
+      question = text unless question
+      null
+
+    # Parsing options
+    optionsLexer(/\s/) (match, rest, state) ->
+      PARSER_LOGGER.log? '[SPACE]'
+      state.continuation rest
+
+    # Delimiter found, push contents of options buffer to answer
+    #  ... | or / ...
+    optionsLexer(/^([^\s+]*)\s*[\||\/]\s*([^\s+]*)$/) (match, rest, state) ->
+      PARSER_LOGGER.log? "[PIPE/SLASH], #{$.trim(match[1])} #{$.trim(match[2])}"
+
+      # Boolean should only have 2 answers. If there are answers detect already, push the whole term as its probably part of a string rather than boolean expression
+      if answers.length == 0
+        answers.push $.trim(match[1]), $.trim(match[2])
+      else
+        answers.push match[0]
+
+      state.continuation rest
+
+    optionsLexer(/\s+or\s+/i) (match, rest, state) ->
+      PARSER_LOGGER.log? "[OR, BUFFER TO ANSWER], #{optionsBuffer.join(' ')}"
+
+      if optionsBuffer.length > 0
+        answers.push optionsBuffer.join(' ')
+        optionsBuffer = []
+
+      state.continuation rest
+
+    optionsLexer(/,/) (match, rest, state) ->
+      PARSER_LOGGER.log? "[COMMA, BUFFER TO ANSWER], #{optionsBuffer.join(' ')}"
+
+      if optionsBuffer.length > 0
+        answers.push optionsBuffer.join(' ')
+        optionsBuffer = []
+
+      state.continuation rest
+
+    # If comma's are present in the sentence, then AND tokens are presumed to be part of the option
+    if _.indexOf(text, ',') < 0
+      optionsLexer(/\s+and\s+/i) (match, rest, state) ->
+        PARSER_LOGGER.log? "[AND, BUFFER TO ANSWER], #{optionsBuffer.join(' ')}"
+
+        if optionsBuffer.length > 0
+          answers.push optionsBuffer.join(' ')
+          optionsBuffer = []
+
+        state.continuation rest
+
+    # Word
+    optionsLexer(/[^,\.\s]+/) (match, rest, state) ->
+      PARSER_LOGGER.log? "[WORD], #{match[0]}"
+      optionsBuffer.push match[0]
+      state.continuation rest
+
+    # Number. With and without decimal
+    optionsLexer(/\d+(\.\d*)?|\.\d+/) (match, rest, state) ->
+      PARSER_LOGGER.log? "[NUMBER], #{match[0]}"
+      optionsBuffer.push match[0]
+      state.continuation rest
+
+    # End of options
+    optionsLexer(/[\.\?]?$/) (match, rest, state) ->
+      PARSER_LOGGER.log? "[END OF OPTIONS WITH CHAR, BUFFER TO ANSWER], #{optionsBuffer.join(' ')}"
+
+      if optionsBuffer.length > 0
+        answers.push optionsBuffer.join(' ')
+        optionsBuffer = []
+
+      null
+
+    optionsLexer(/$/) (match, rest, state) ->
+      PARSER_LOGGER.log? "[END OF OPTIONS, BUFFER TO ANSWER], #{optionsBuffer.join(' ')}"
+
+      if optionsBuffer.length > 0
+        answers.push optionsBuffer.join(' ')
+        optionsBuffer = []
+
+      null
+
+    # Single quote
+    string1(/[^\']+/) (match, rest, state) ->
+      if tokens.join(' ').length + match.join(' ').length + 1 == text.length
+        # Lexer went all the way to end of string meaning this is an apostrophe rather than a single quote
+        # Push apostrophe token and run through rest of string
+        tokens.push "'"
+        lexer.run match[0]
+      else
+        # Store contents of quote
+        PARSER_LOGGER.log? "[SINGLE QUOTE], '#{match[0]}'"
+        tokens.push "'#{match[0]}'"
+        state.continuation rest
+
+    string1(/\'/) (match, rest, state) ->
+      # End of quote, jump back into lex
+      lexer.run rest
+
+    # Double quote
+    string2(/[^\"]+/) (match, rest, state) ->
+      # Store contents of quote
+      PARSER_LOGGER.log? "[DOUBLE QUOTE], \"#{match[0]}\""
+      tokens.push "\"#{match[0]}\""
+      state.continuation rest
+
+    string2(/\"/) (match, rest, state) ->
+      # End of quote, jump back into lex
+      lexer.run rest
+
+    try
+      lexer.lex(text)
+    catch error
+      PARSER_LOGGER.log? "[PARSE ERROR], #{error}"
+      # parse error!
+      # assume we can't parse it
+      question = text
+
+    question: question, answers: answers
+
+  @parseFromText: (text) ->
+    result = @lex(text)
+
+    if result.answers.length > 0
+      poll = new MultipleChoicePoll(title: result.question)
+      for option in result.answers
+        do (option) ->
+          poll.options.add value: $.trim(option)
+
+      poll
+    else
+      new FreeTextPoll(title: result.question)

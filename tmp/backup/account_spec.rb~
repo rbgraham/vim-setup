@@ -1,0 +1,904 @@
+require 'spec_helper'
+
+describe Account, :type => :model do
+  def get_new_account(options={})
+    Account.new({
+      :plan => @default_plan,
+      :results_counter => 0,
+      :custom_keywords => false,
+      :price => 0.0,
+      :billing_cycle => '30.days',
+      :reports => false,
+      :custom_confirmations => false,
+      :web_branded => false,
+      :moderation => false,
+      :participant_reporting => false
+    }.merge(options)) do |a|
+      a.owner = (options[:owner] || users(:quentin))
+
+      # It looks like our acts_as_infinite helper can randomly cause these to
+      # get set to the default value if we use mass assignment. Setting these
+      # here keeps the test passing more consistently.
+      a.maximum_users = options.has_key?(:maximum_users) ? options[:maximum_users] : 10
+      a.maximum_votes_per_poll = options.has_key?(:maximum_votes_per_poll) ? options[:maximum_votes_per_poll] : 1000
+    end
+  end
+  before do
+    # Force these 'fixtures' to be saved in the db.
+    @default_plan_set ||= plan_sets(:retail)
+    @default_plan ||= plans(:free)
+  end
+
+  it "is enterprise" do
+    expect(get_new_account(:maximum_users => 11)).to be_enterprise
+  end
+
+  context "billing description" do
+    it "shows plan name" do
+      expect(get_new_account(:plan => plans(:personal)).billing_description).to eql("Personal Plan")
+    end
+
+    it "shows /w Broadcast lists if broadcast enabled?" do
+      expect(get_new_account(:plan => plans(:professional), :sms_broadcasting => true).billing_description).to eql("Professional Plan w/ Broadcast Lists")
+    end
+  end
+
+  it "saves a valid account" do
+    expect(get_new_account).to be_valid
+  end
+
+  it "requires greater than 0 maximum_votes_per_poll" do
+    account = get_new_account(:maximum_votes_per_poll => 0)
+    expect(account).not_to be_valid
+    expect(account).to have(1).errors_on(:maximum_votes_per_poll)
+    expect(get_new_account(:maximum_votes_per_poll => 1)).to be_valid
+  end
+
+  it "allows Infinity maximum_results_per_poll" do
+    expect(get_new_account(:maximum_votes_per_poll => Infinity)).to be_valid
+  end
+
+  it "has results_counter" do
+    account = get_new_account
+    expect(account).to respond_to(:results_counter)
+    expect(account.results_counter).to eql(0)
+  end
+
+  it "requires greater than 0 maximum_users" do
+    account = get_new_account(:maximum_users => 0)
+    expect(account).not_to be_valid
+    expect(account).to have(1).errors_on(:maximum_users)
+    expect(get_new_account(:maximum_users => 1)).to be_valid
+  end
+
+  it "haves custom_keywords" do
+    expect(get_new_account).to respond_to(:custom_keywords)
+  end
+
+  it "requires price" do
+    account = get_new_account(:price => nil)
+    expect(account).not_to be_valid
+    expect(account).to have(1).errors_on(:price)
+  end
+
+  it "allows a $0.00 price for free accounts" do
+    expect(get_new_account(:price => 0)).to be_valid
+  end
+
+  it "does not allow negative price" do
+    account = get_new_account(:price => -1)
+    expect(account).not_to be_valid
+    expect(account).to have(1).errors_on(:price)
+  end
+
+  it "requires billing_cycle if paid" do
+    expect(get_new_account(:billing_cycle => nil, :price => 10.0)).not_to be_valid
+  end
+
+  it "requires billing_cycle to be a parsable string" do
+    account = get_new_account(:billing_cycle => "dog")
+    expect(account).not_to be_valid
+    expect(account).to have(1).errors_on(:billing_cycle)
+    expect(get_new_account(:billing_cycle => "45.days")).to be_valid
+  end
+
+  it "has reports" do
+    expect(get_new_account).to respond_to(:reports)
+  end
+
+  it "has custom_confirmations" do
+    expect(get_new_account).to respond_to(:custom_confirmations)
+  end
+
+  it "is web_branded" do
+    expect(get_new_account).to respond_to(:web_branded)
+  end
+
+  it "has moderation" do
+    expect(get_new_account).to respond_to(:moderation)
+  end
+
+  it "has participant_reporting" do
+    expect(get_new_account).to respond_to(:participant_reporting)
+  end
+
+  it "requires a plan" do
+    account = get_new_account(:plan => nil)
+    expect(account).not_to be_valid
+    expect(account).to have(1).error_on(:plan)
+  end
+
+  it "has Plan.default as default Account.plan" do
+    plan = Plan.new
+    Plan.stubs(:default).returns(plan)
+    expect(Account.new.plan).to eql(plan)
+  end
+
+  it "configures account features from plan assignment" do
+    account = get_new_account(:plan => nil)
+    account.moderation = false
+    account.plan = Plan.new(:moderation => true)
+    expect(account.moderation).to eql(true)
+    expect(account.plan).not_to be_nil
+  end
+
+  it "has a payment method for a plan that needs one" do
+    account = accounts(:sean_professional)
+    expect(account.plan).to be_requires_payment
+    expect(account.owner.payment_method).not_to be_nil
+  end
+
+  it "has to_proper_noun" do
+    account = get_new_account
+    expect(account.to_proper_noun).to eql("#{account.owner.to_proper_noun.possessive} Account")
+  end
+
+  it "requires_payment" do
+    account = get_new_account(:price => 1.0)
+    expect(account).to be_requires_payment
+  end
+
+  it "sets bill_at date if paid" do
+    @now = Time.now
+    Time.expects(:now).returns(@now).at_least_once
+
+    @account = get_new_account(:price => 10.0)
+    expect(@account).to be_valid
+    @account.save!
+    expect(@account.bill_at).to eql(@account.parsed_billing_cycle.from_now)
+  end
+
+  it "does not set bill_at date if free" do
+    @account = get_new_account(:price => 0.0)
+    @account.save!
+    expect(@account.bill_at).to be_nil
+  end
+
+  it "does not requires_payment" do
+    @account = get_new_account(:price => 0.0)
+    expect(@account).not_to be_requires_payment
+  end
+
+  it "requires maximum_votes_per_poll" do
+    @account = get_new_account(:maximum_votes_per_poll => nil)
+    expect(@account).not_to be_valid
+    expect(@account).to have(1).errors_on(:maximum_votes_per_poll)
+  end
+
+  it "has polls" do
+    @account = get_new_account
+    expect(@account).to respond_to(:polls)
+  end
+
+  it "adjusts the counters when a broadcast is sent out" do
+    @account = accounts(:sean_professional)
+    @mt_counter = @account.mt_counter
+    @broadcast_messages_remaining = @account.broadcast_messages_remaining
+    @account.deduct_broadcast!
+    @account.reload
+    expect(@account.mt_counter).to eql(@mt_counter + 1)
+    expect(@account.broadcast_messages_remaining).to eql(@broadcast_messages_remaining - 1)
+  end
+
+  describe "memberships" do
+    before do
+      @user = FactoryGirl.create(:paid_presenter)
+      @account = @user.account
+      @subuser = FactoryGirl.create(:presenter, :account => @account)
+
+      expect(@account.registered_users.include?(@subuser)).to be true
+      expect(@account.registered_users.include?(@user)).to be true
+
+      # Create a user who is registered with this account, but not a subuser
+      @non_subuser = FactoryGirl.create(:user)#users(:brad)
+      Membership.create! :user => @non_subuser, :account => @account
+      @account.reload
+    end
+
+    it "is able to provide a count of memberships of people who are not subusers" do
+      expect(@account.memberships.count_non_subusers).to eq(1)
+    end
+
+    it "is able to purge memberships of people who are not subusers" do
+      expect(@account.memberships.map(&:user).to_set).to eq(Set[@user, @subuser, @non_subuser])
+      expect(@account.memberships.purge_participants).to eq(1)
+      @account.reload
+      expect(@account.memberships.map(&:user).to_set).to eq(Set[@user, @subuser])
+    end
+  end
+
+  describe "invitations" do
+    before(:each) do
+      @account = accounts(:sean_professional)
+    end
+
+    it "has invitations" do
+      expect(@account).to respond_to(:invitations)
+    end
+
+    it "has remaining_registered_users" do
+      expect(@account.remaining_registered_users).to eql(2)
+    end
+
+    it "has total_users" do
+      expect(@account.total_account_users).to eql @account.registered_users.size + @account.invitations.size
+    end
+
+    it "is running low on users" do
+      expect(@account.running_low_on_users?(@account.remaining_registered_users.to_f / @account.maximum_users.to_f + 0.1)).to eql(true)
+    end
+  end
+
+  describe "billing cycle" do
+    before(:each) do
+      @account = accounts(:sean_professional)
+      @time = Time.new(2013, 10, 14)
+      @account.update_attributes!(:billing_cycle => "30.days", :bill_at => @time)
+    end
+
+    it "calculates bill_at_next" do
+      expect(@account.bill_at_next).to eql(30.days.from_now(@time))
+    end
+
+    it "does not accept duration expressed as Ruby duration" do
+      @account.billing_cycle = 30.days
+      expect(@account).not_to be_valid
+      expect(@account).to have(1).error_on(:billing_cycle)
+    end
+
+    it "does not accept duration as non-duration string" do
+      @account.billing_cycle = "Non-duration string"
+      expect(@account).not_to be_valid
+      expect(@account).to have(1).error_on(:billing_cycle)
+    end
+  end
+
+  describe "proration" do
+    QUARTERS = 4
+
+    before(:each) do
+      # Freeze time!
+      @now = Time.parse("Mar 31, 2010")
+      Time.expects(:now).returns(@now).at_least_once
+
+      @account = accounts(:sean_professional)
+      @old_price = @account.price
+      @old_billing_cycle = @account.billing_cycle
+      @billing_cycle = @account.plan.billing_cycles.first
+
+      @account.bill_at = @now + (@account.parsed_billing_cycle / QUARTERS)
+      @account.price = @old_price
+      @account.billing_cycle = @billing_cycle.duration
+      @account.save!
+
+      # We give a quarter of the previous price since 3 quarters of the billing cycle has been consumed.
+      @prorated_credit = @old_price / QUARTERS
+    end
+
+    it "credits the new price based on the amount of unused days in the previous billing cycle" do
+      new_price = 1000.0
+      # Should be $900 since we take the prorated credit of $100 (1 quarter of the $400) and apply that
+      # towards the $1000 plan ($1000 - ($400 * 0.25))
+      expect(@account.prorated_price(new_price)).to eql(new_price - @prorated_credit)
+    end
+
+    it "has a prorated price of $0.00 when the new price is less than current price" do
+      new_price = 3.0 # 3$ plan! Oh my!
+      expect(@account.prorated_price(new_price)).to eql(0.0)
+    end
+
+    it "is greater if proration is greater than the sum of old and new plan prices" do
+      new_price = 500.0
+      @account.update_attribute(:bill_at, @account.bill_at - 2.months)
+      expect(@account.prorated_price(new_price)).to be >= 500.0
+    end
+
+    it "returns $0.00 if prorate less than $0.00" do
+      new_price = @account.price
+      @account.update_attribute(:bill_at, @now + @account.parsed_billing_cycle + 1.day)
+
+      expect(@account.prorated_price(new_price)).to eql(0.0)
+    end
+  end
+
+  describe "features" do
+
+    before(:each) do
+      @account = get_new_account
+    end
+
+    it "has features" do
+      expect(@account).to respond_to(:features)
+    end
+
+    it "gets and set features hash" do
+      features = {
+        'maximum_votes_per_poll' => 9999,
+        'moderation' => false
+      }
+      @account.features = features
+
+      features.each do |key, val|
+        expect(@account.features[key]).to eql(val)
+      end
+    end
+
+    it "accepts and parse plan features" do
+      plan = plans(:professional)
+      plan_features = Account::FEATURES.inject({}) do |hash, feature|
+        hash[feature] = plan.send(feature) if plan.respond_to?(feature)
+        hash
+      end
+      @account.features = plan
+      expect(@account.features).to include(plan_features)
+    end
+  end
+
+  describe "upgrades" do
+    before(:each) do
+      @account = accounts(:sean_professional)
+      @original_plan = @account.plan
+      @upgrade_plan = @original_plan.higher_plan
+      @billing_cycle = @upgrade_plan.billing_cycles.find_by_duration(@account.billing_cycle)
+      @price = @billing_cycle.price
+      # Freeze time!
+      @now = Time.now
+      Time.expects(:now).returns(@now).at_least_once
+    end
+
+    it "upgrades to new plan" do
+      @account.billing_cycle = @billing_cycle.duration
+      @account.change_plan(@upgrade_plan)
+      expect(@account.plan).to eql(@upgrade_plan)
+    end
+
+    it "changes price after upgrade" do
+      @account.billing_cycle = @billing_cycle.duration
+      @account.change_plan(@upgrade_plan)
+      expect(@account.price).to eql(@price)
+    end
+
+    it "changes features after upgrade" do
+      @original_features = @account.features
+      @account.billing_cycle = @billing_cycle.duration
+      @account.change_plan(@upgrade_plan)
+      expect(@account.features).to include(@original_features)
+    end
+
+    it "resets the bill_at date to the bill_at date plus the amount of time in the billing_cycle" do
+      @account.billing_cycle = @billing_cycle.duration
+      @account.change_plan(@upgrade_plan)
+      # Some ugly to_s UTC crap because rspec wasn't comparing the Time objects properly...
+      expect(@account.bill_at.utc.to_s).to eql(@billing_cycle.parsed_duration.from_now.utc.to_s)
+    end
+
+    it "creates an order" do
+      expect {
+        @account.billing_cycle = @billing_cycle.duration
+        @account.change_plan(@upgrade_plan)
+      }.to change(Order, :count).by(1)
+    end
+
+    it "requires a payment method" do
+      @account.owner.payment_method.destroy
+      @account.reload
+      expect {
+        @account.billing_cycle = @billing_cycle.duration
+        @account.change_plan!(@upgrade_plan)
+      }.to raise_error(ActiveRecord::RecordInvalid)
+      expect(@account.errors[:payment_method]).not_to be_nil
+    end
+  end
+
+  describe "non-plan features" do
+    it "includes another line item (and add to the total) for SMS broadcast and text2give" do
+      a = accounts(:sean_professional)
+      a.bill_at = Time.now
+      a.save!
+
+      expect(a.price_with_non_plan_features).to eql(a.price + a.sms_broadcast_price)
+      expect { a.bill! }.to change(Order, :count).by(1)
+      expect(a.owner.orders.last.amount).to eql(a.price_with_non_plan_features)
+    end
+  end
+
+  describe "downgrades" do
+    before(:each) do
+      @account = accounts(:brad_max)
+      @original_plan = @account.plan
+      @downgrade_plan = @original_plan.lower_plan
+      @billing_cycle = @downgrade_plan.billing_cycles.find_by_duration(@account.billing_cycle)
+      @price = @billing_cycle.price
+      # Freeze time!
+      @now = Time.now
+      # Time.expects(:now).returns(@now).at_least_once
+    end
+
+    it "changes the current plan" do
+      @account.downgrade!(@downgrade_plan)
+      expect(@account.plan).to eql(@downgrade_plan)
+    end
+
+    it "raises PaymentMethodRequired if a payment method if downgrade to a paid plan" do
+      @account.owner.payment_method.destroy
+      @account.reload
+      expect {
+        @account.downgrade!(@downgrade_plan, @billing_cycle)
+      }.to raise_error(PaymentMethodRequired)
+    end
+
+    it "does not require a payment method if downgrade to a free plan" do
+      @downgrade_plan = plans(:free)
+      @account.owner.payment_method.destroy
+      # Can't have subusers on the free plan
+      @account.registered_users.each { |u| u.destroy unless u == @account.owner }
+      @account.invitations.destroy_all
+      expect {
+        @account.downgrade!(@downgrade_plan, @billing_cycle)
+      }.to_not raise_error
+    end
+
+    it "raises ArgumentError if more users are on the current account than allowed by the downgrade plan" do
+      @account.expects(:total_account_users).returns(@downgrade_plan.maximum_users + 1).times(2)
+      expect {
+        @account.downgrade!(@downgrade_plan, @billing_cycle)
+      }.to raise_error(ArgumentError, /Account has too many users for the downgraded plan/)
+    end
+
+    it "raises ArgumentError if no features or downgrade_plan are provided" do
+      @account.change_plan(plans(:free), @billing_cycle)
+      expect(@account).to have(1).error#should raise_error(ArgumentError, /Plan or features required to downgrade a plan/)
+    end
+
+    it "replaces custom keywords with automatically generated ones" do
+      poll_keyword = polls(:olympics).accumulators.first.keyword
+
+      expect(Keyword.find_by_keyword(poll_keyword)).to be_custom
+      expect(Keyword.find_by_keyword(poll_keyword)).not_to be_available
+
+      @account.update_attribute(:custom_keywords, true)
+      @downgrade_plan.update_attribute(:custom_keywords, false)
+
+      expect(@downgrade_plan).not_to be_custom_keywords
+      @account.downgrade!(@downgrade_plan, @billing_cycle)
+
+      expect(Keyword.find_by_keyword(poll_keyword)).to be_available
+
+      polls(:olympics).reload
+      expect(polls(:olympics).accumulators.first).to have_auto_generated_keyword
+    end
+
+    it "causes polls with moderation enabled to lose their moderation" do
+      @account.moderation = true
+      @account.custom_keywords = true
+      @account.save!
+      @downgrade_plan.moderation = false
+      @downgrade_plan.save!
+
+      polls(:olympics).moderation_enabled = true
+      polls(:olympics).save!
+
+      @account.downgrade!(@downgrade_plan, @billing_cycle)
+      polls(:olympics).reload
+      expect(polls(:olympics).moderation_enabled).to be_falsey
+    end
+
+    it "removes registered participants requirement on polls" do
+      @downgrade_plan.participant_reporting = false
+      @downgrade_plan.save!
+
+      polls(:olympics).registered_participants_only = true
+      polls(:olympics).save!
+
+      @account.downgrade!(@downgrade_plan, @billing_cycle)
+      polls(:olympics).reload
+      expect(polls(:olympics).registered_participants_only).to be_falsey
+    end
+  end
+
+  describe "subscription billing" do
+    before(:each) do
+      @account = accounts(:brad_max)
+      @account.update_attribute(:bill_at, Time.now)
+      @original_price = @account.price
+      @original_plan = @account.plan
+      @downgrade_plan = @account.downgrade_plan
+    end
+
+    it "bills account" do
+      expect { @account.bill! }.to change(Order, :count).by(1)
+      @order = @account.owner.orders.last
+      expect(@order.amount).to eql(@account.price)
+    end
+
+    it "bills users with bill_at date of today" do
+      # We have to set them all to $1.00 because the subscription biller now only
+      # processes accounts that actually require any payment to be processed.
+      Account.update_all(:bill_at => Date.today, :price => 1.00)
+      expect(Account.billable.active.size).to eql(Account.count)
+    end
+
+    it "nots bill users with bill_at date of today that is still in the future" do
+      # We have to set them all to $1.00 because the subscription biller now only
+      # processes accounts that actually require any payment to be processed.
+      Account.update_all(:bill_at => 10.minutes.from_now, :price => 1.00)
+      expect(Account.billable.active).to be_empty
+    end
+
+    it "downgrades account and bill amount for new plan" do
+      @lower_plan = @account.plan.lower_plan
+      @lower_plan_features = Account::FEATURES.inject({}) do |hash, feature|
+        hash[feature] = @lower_plan.send(feature) if @lower_plan.respond_to?(feature)
+        hash
+      end
+      @billing_cycle = @lower_plan.billing_cycles.find_by_duration(@account.billing_cycle)
+      @price = @billing_cycle.price
+      @account.downgrade_plan = @lower_plan
+      @account.bill!
+      @account.reload
+      expect(@account.features).to include(@lower_plan_features)
+      expect(@account.price).to eql(@price)
+    end
+
+    it "emails people with failed payment methods and mark them as failed" do
+      PaymentMethod.any_instance.stubs(:charge!).raises(PaymentMethod::ChargeRejectedException.new("ChargeFail"))
+      expect(@account.active?).to be_truthy
+
+      @account.update_attribute(:bill_at, 1.days.ago)
+
+      expect(Account.billable.active).not_to be_empty
+      mailer_mock = mock
+      AccountMailer.expects(:payment_declined).with(@account).returns(mailer_mock)
+      mailer_mock.expects(:deliver)
+      Account.bill_active_accounts!
+      @account.reload
+
+      expect(@account.failed_payment_method?).to be_truthy
+    end
+
+    it "does not worry about failed payment methods during the grace period" do
+      @account.fail_payment_method!
+      expect(Account.billable.failed_payment_method.past_grace_period).to be_empty
+    end
+
+    it "bills people with failed payment methods who fix them up after a grace period" do
+      @account.fail_payment_method!
+      @account.update_attribute(:bill_at, 9.days.ago)
+      expect(Account.billable.failed_payment_method.past_grace_period).not_to be_empty
+
+      expect(@account.failed_payment_method?).to be_truthy
+      Account.auto_downgrade_failed_payment!
+      @account.reload
+      expect(@account).to be_active
+      expect(@account.plan.price).not_to eql(0.0)
+    end
+
+
+    it "downgrades people with failed payment methods after a grace period" do
+      @account.fail_payment_method!
+      @account.update_attribute(:bill_at, 9.days.ago)
+
+      expect(@account.plan.price).not_to eql(0.0)
+      expect(@account.failed_payment_method?).to be_truthy
+
+      @account.invitations.each(&:destroy)
+      @account.reload
+      expect(@account.registered_users.size).to eql(1)
+      expect(@account.invitations.size).to eql(0)
+
+      PaymentMethod.any_instance.stubs(:charge!).raises(PaymentMethod::ChargeRejectedException.new("ChargeFail"))
+      Account.auto_downgrade_failed_payment!
+      @account.reload
+      expect(@account.active?).to be_truthy
+      expect(@account.plan.price).to eql(0.0)
+    end
+
+    describe '.need_billing_reminders' do
+      before do
+        Timecop.freeze(PollEverywhere::Schedule::SEND_BILLING_REMINDERS_AT)
+      end
+      after do
+        Timecop.return
+      end
+      let(:account) do
+        FactoryGirl.create(
+          :paid_account,
+          :billing_reminder_enabled => true
+        )
+      end
+
+      it "includes accounts to be billed 2.1 days from now" do
+        account.update_attribute(:bill_at, 2.days.from_now + 1.minute)
+        expect(Account.active.need_billing_reminders).to include(account)
+      end
+      it "includes accounts to be billed 2.9 days from now" do
+        account.update_attribute(:bill_at, 3.days.from_now - 1.minute)
+        expect(Account.active.need_billing_reminders).to include(account)
+      end
+      it "does not include accounts to be billed 3.1 days from now" do
+        account.update_attribute(:bill_at, 3.days.from_now + 1.minute)
+        expect(Account.active.need_billing_reminders).not_to include(account)
+      end
+      it "does not include accounts to be billed 1.9 days from now" do
+        account.update_attribute(:bill_at, 2.days.from_now - 1.minute)
+        expect(Account.active.need_billing_reminders).not_to include(account)
+      end
+      it "does not include accounts with 1 year billing cycle" do
+        account.update_attributes!(:bill_at => 2.days.from_now + 1.minute,
+          :billing_cycle => "1.year")
+        expect(Account.active.need_billing_reminders).not_to include(account)
+      end
+    end
+
+    describe '.need_annual_billing_reminders' do
+      before do
+        Timecop.freeze(PollEverywhere::Schedule::SEND_ANNUAL_BILLING_REMINDERS_AT)
+        @account.update_attributes!(:billing_cycle => "1.year",
+          :price => Account::LOWEST_PRICE_FOR_ANNUAL_REMINDER + 1)
+      end
+      after do
+        Timecop.return
+      end
+
+      it "includes accounts to be billed 2.1 days from now" do
+        @account.update_attribute(:bill_at, 2.days.from_now + 1.minute)
+        expect(Account.active.need_annual_billing_reminders).to include(@account)
+      end
+      it "includes accounts to be billed 2.9 days from now" do
+        @account.update_attribute(:bill_at, 3.days.from_now - 1.minute)
+        expect(Account.active.need_annual_billing_reminders).to include(@account)
+      end
+      it "does not include accounts to be billed 3.1 days from now" do
+        @account.update_attribute(:bill_at, 3.days.from_now + 1.minute)
+        expect(Account.active.need_annual_billing_reminders).not_to include(@account)
+      end
+      it "does not include accounts to be billed 1.9 days from now" do
+        @account.update_attribute(:bill_at, 2.days.from_now - 1.minute)
+        expect(Account.active.need_annual_billing_reminders).not_to include(@account)
+      end
+
+      it "includes accounts to be billed 30.1 days from now" do
+        @account.update_attribute(:bill_at, 30.days.from_now + 1.minute)
+        expect(Account.active.need_annual_billing_reminders).to include(@account)
+      end
+      it "includes accounts to be billed 30.9 days from now" do
+        @account.update_attribute(:bill_at, 31.days.from_now - 1.minute)
+        expect(Account.active.need_annual_billing_reminders).to include(@account)
+      end
+      it "does not include accounts to be billed 31.1 days from now" do
+        @account.update_attribute(:bill_at, 31.days.from_now + 1.minute)
+        expect(Account.active.need_annual_billing_reminders).not_to include(@account)
+      end
+      it "does not include accounts to be billed 29.9 days from now" do
+        @account.update_attribute(:bill_at, 30.days.from_now - 1.minute)
+        expect(Account.active.need_annual_billing_reminders).not_to include(@account)
+      end
+
+      it "does not include accounts with non-annual plans" do
+        @account.update_attributes!(
+          :bill_at => 2.days.from_now + 1.minute,
+          :billing_cycle => "30.days")
+        expect(Account.active.need_annual_billing_reminders).not_to include(@account)
+      end
+      it 'does not include inexpensive plans' do
+        @account.update_attributes!(
+          :bill_at => 2.days.from_now + 1.minute,
+          :price => Account::LOWEST_PRICE_FOR_ANNUAL_REMINDER - 1)
+        expect(Account.active.need_annual_billing_reminders).not_to include(@account)
+      end
+    end
+
+    describe '#bill_at_for_reminders' do
+      it "is today's billing time if it is before 4am UTC" do
+        account = Account.new :bill_at => Time.parse("2013-11-13 3:59 UTC")
+        expect(account.bill_at_for_reminders).to eql Time.parse("2013-11-13 4:00 UTC")
+      end
+      it "is day's billing time if it is after 4am UTC" do
+        account = Account.new :bill_at => Time.parse("2013-11-13 4:01 UTC")
+        expect(account.bill_at_for_reminders).to eql Time.parse("2013-11-14 4:00 UTC")
+
+        account = Account.new :bill_at => Time.parse("2013-11-13 23:59 UTC")
+        expect(account.bill_at_for_reminders).to eql Time.parse("2013-11-14 4:00 UTC")
+      end
+
+      context '#bill_at is nil' do
+        let(:account) { FactoryGirl.create(:account, :bill_at => nil) }
+        it 'is nil' do
+          expect(account.bill_at_for_reminders).to be_nil
+        end
+      end
+
+    end
+  end
+
+  describe 'sales_quota_responding_users' do
+    def build_result(optionz={})
+      Result.new(optionz) do |result|
+        result.poll = optionz[:poll] || @poll
+        result.accumulator = optionz[:accumulator] || @poll.accumulators.first
+        result.value = optionz[:value] || @poll.accumulators.first.value
+        result.voter = optionz[:voter] || users(:phoney)
+        result.source = optionz[:source] || Source.mm_54321_us
+      end
+    end
+
+
+    before :each do
+      @account = accounts(:andy_enterprise)
+      @account.polls.each {|p| p.clear! }
+      @poll = @account.polls.first
+      @poll.max_votes = 5
+      @poll.state = "opened"
+      @poll.save
+    end
+
+    it 'returns an accurate integer count' do
+      ([:brad, :jeff, :sean]*2).each do |u|
+        build_result(:voter => users(u), :value => rand(10).to_s).save
+      end
+      expect(@account.sales_quota_responding_users).to eql(2)
+
+      build_result(:voter => users(:phoney), :value => rand(10).to_s).save
+      build_result(:voter => users(:jeff), :value => rand(10).to_s).save
+      build_result(:voter => users(:seans_partner_in_crime),
+                   :value => rand(10).to_s).save
+      build_result(:voter => users(:wheel_spinner), :value => rand(10).to_s).save
+      expect(@account.sales_quota_responding_users).to eql(4)
+    end
+  end
+
+  describe 'Converting participants to subusers' do
+    before :each do
+      @account = accounts(:andy_enterprise)
+      @registererd_participants_size = @account.participants.size
+    end
+
+    it 'converts a participant to an account subuser' do
+      expect(@account.registered_users.size < @registererd_participants_size).to be_truthy
+
+      @msg = @account.promote_participants_to_subusers!
+
+      expect(@account.registered_users.size).to eql(@registererd_participants_size)
+
+      expect(@msg).to eql("Promoted 1 out of 1 participants")
+    end
+
+    it 'denys promotions if there arent enough users' do
+      @account.maximum_users = 2
+
+      expect(@account.promote_participants_to_subusers!).to eql("Not enough remaining subusers on the account to convert participants")
+
+      expect(@account.registered_users.size).to eql(2)
+    end
+
+  end
+
+  describe "destruction" do
+    before(:each) do
+      @account = accounts(:sean_professional)
+      @account_id = @account.id
+      @user_ids = @account.registered_users.collect { |u| u.id }
+      @owner_id = @account.owner.id
+      @account.destroy
+    end
+
+    it "moves all sub-users to a new account" do
+      user_ids = @user_ids.select{|id| id != @owner_id }
+      expect(user_ids).not_to be_empty # sanity check
+      new_users = User.where(:id => user_ids)
+      expect(new_users.count).to eql(user_ids.size)
+      new_users.each {|u|
+        expect(u.account.id).not_to eql @account_id
+        expect(u.account).not_to be_nil
+      }
+    end
+
+    it "destroys memberships" do
+      expect(Membership.find_by_account_id(@account_id)).to be_nil
+    end
+
+    it "destroys invitations" do
+      expect(Invitation.find_by_account_id(@account_id)).to be_nil
+    end
+  end
+
+  describe '#sms_footer?' do
+    it 'is true when #intro_sms? is true' do
+      subject.stubs(:intro_sms? => true)
+      expect(subject.sms_footer?).to be_truthy
+    end
+    it 'is false when #intro_sms? is false' do
+      subject.stubs(:intro_sms? => false)
+      expect(subject.sms_footer?).to be_falsey
+    end
+  end
+
+  describe '#result_count' do
+    subject { FactoryGirl.create(:account) }
+    let(:user1) { FactoryGirl.create(:presenter, :account => subject) }
+    let(:user2) { FactoryGirl.create(:presenter, :account => subject) }
+    let(:poll1) { FactoryGirl.create(:multiple_choice_poll, :owner => user1, :opened_at => 1.day.ago) }
+    let(:poll2) { FactoryGirl.create(:multiple_choice_poll, :owner => user2, :opened_at => 1.day.ago) }
+    let(:source) { Source.mm_54321_us }
+    let :vote do
+      Proc.new do |accumulator|
+        accumulator.capture!(nil, :sms, true) do |r|
+          r.participant = FactoryGirl.create(:participant)
+          r.value = accumulator.value
+          r.source = source
+        end.tap {|result| expect(result).not_to be_new_record }
+      end
+    end
+
+    it 'includes results from polls of all users' do
+      vote.call poll1.accumulators[0]
+      vote.call poll2.accumulators[0]
+      expect(subject.result_count).to eql 2
+    end
+
+    it 'includes archived results' do
+      vote.call poll1.accumulators[0]
+      vote.call poll2.accumulators[0]
+      poll1.archive_results!
+      poll2.archive_results!
+      vote.call poll1.accumulators[0]
+      vote.call poll2.accumulators[0]
+      expect(subject.result_count).to eql 4
+    end
+
+    it 'does not include deleted results' do
+      vote.call poll1.accumulators[0]
+      vote.call poll2.accumulators[0]
+      poll1.clear!
+      poll2.clear!
+      expect(subject.result_count).to eql 0
+    end
+
+    context 'specify older_than param' do
+      before do
+        Timecop.freeze
+        vote.call poll1.accumulators[0]
+        Timecop.freeze 10.days.from_now
+        vote.call poll2.accumulators[0]
+        Timecop.freeze 2.days.from_now
+      end
+      after do
+        Timecop.return
+      end
+
+      it 'only counts the results older than that many days' do
+        expect(subject.result_count).to eql 2
+        expect(subject.result_count(:older_than => 0)).to eql 2
+        expect(subject.result_count(:older_than => 1)).to eql 2
+        expect(subject.result_count(:older_than => 3)).to eql 1
+        expect(subject.result_count(:older_than => '3')).to eql 1
+        expect(subject.result_count(:older_than => 30)).to eql 0
+      end
+
+      it 'ignores super old dates' do
+        expect(subject.result_count(:older_than => 100000)).to eql 2
+      end
+    end
+
+  end
+end

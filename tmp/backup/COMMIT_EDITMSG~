@@ -1,0 +1,19 @@
+
+# Please enter the commit message for your changes. Lines starting
+# with '#' will be ignored, and an empty message aborts the commit.
+# On branch master
+# Your branch is up-to-date with 'origin/master'.
+#
+# Changes to be committed:
+#	modified:   config/schedule.rb
+#	modified:   lib/closeio/opportunity.rb
+#	modified:   lib/closeio/sync_key_leads.rb
+#	modified:   lib/closeio/sync_opportunities.rb
+#	new file:   scripts/resync_key_accounts.rb
+#	modified:   scripts/sync.rb
+#	modified:   spec/closeio/sync_key_leads_spec.rb
+#	modified:   spec/closeio/sync_opportunities_spec.rb
+#
+# Untracked files:
+#	shared/
+#

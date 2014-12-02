@@ -1,0 +1,39 @@
+require 'spec_helper'
+
+describe SalesQuotaRespondingUsersCollector, :type => :model do
+  def build_result(options={})
+    Result.new(options) do |result|
+      result.poll = options[:poll] || @poll
+      result.accumulator = options[:accumulator] || @poll.accumulators.first
+      result.value = options[:value] || @poll.accumulators.first.value
+      result.voter = options[:voter] || users(:phoney)
+      result.source = options[:source] || Source.mm_54321_us
+    end
+  end
+
+  before do
+    @account = accounts(:andy_enterprise)
+    @account.polls.each {|p| p.clear! }
+    @poll = @account.polls.first
+    @poll.max_votes = 5
+    @poll.state = "opened"
+    @poll.save
+  end
+  
+  describe 'count' do
+    it 'returns an accurate integer count' do
+      collector = SalesQuotaRespondingUsersCollector.new(@account)
+      ([:brad, :jeff, :sean]*2).each do |u|
+        build_result(:voter => users(u), :value => rand(10).to_s).save
+      end
+      expect(collector.count).to eql(2)
+
+      build_result(:voter => users(:phoney), :value => rand(10).to_s).save
+      build_result(:voter => users(:jeff), :value => rand(10).to_s).save
+      build_result(:voter => users(:seans_partner_in_crime),
+                   :value => rand(10).to_s).save
+      build_result(:voter => users(:wheel_spinner), :value => rand(10).to_s).save
+      expect(collector.count).to eql(4)
+    end
+  end
+end

@@ -1,0 +1,42 @@
+require "forwardable"
+require_relative "../closeio"
+require_relative "opportunity"
+
+# Working with collections of opportunities.
+# Creating new opportunities.
+class Closeio::Opportunities
+  include Enumerable
+  extend Forwardable
+
+  # TODO: Explicitly test this delegation
+  def_delegators :@opportunities, :each
+
+  attr_reader :api
+  STATUS_ID = {
+    :retention_active => "stat_L4klDquuAFRzLV9IKpWAluz7b6DhT7IOKtWFDDatdbl"
+  }
+
+  def initialize(api=Closeio.api.new("opportunity"))
+    @api = api
+    @opportunities = []
+  end
+
+  # Creates a new opportunity in Close.io and returns an Opportunity.
+  def create(opportunity_hash)
+    # TODO: Add some error handling
+    # TODO: Test specifying `"lead"`.
+    lead = opportunity_hash.delete("lead")
+    opportunity_hash["lead_id"] ||= lead.id if lead
+    # TODO: Test this STATUS_ID lookup and fall back
+    opportunity_hash["status_id"] = STATUS_ID[opportunity_hash["status_id"]] || opportunity_hash["status_id"]
+    response = api.post(opportunity_hash)
+    opportunity = Closeio::Opportunity.new(JSON.parse(response.body).merge("lead" => lead))
+    @opportunities << opportunity
+    opportunity
+  end
+
+  def active(skip = 0, limit = 100)
+    response = api.get("status_type=active", skip, limit)
+    response
+  end
+end

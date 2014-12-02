@@ -1,0 +1,201 @@
+class Kpi::Base
+  DATETIME_FORMAT = "%-d-%-m-%Y"
+  # Ruby is too stupid to parse with the above format
+  DATETIME_PARSE_FORMAT = "%d-%m-%Y"
+
+  def last_sunday
+    (DateTime.now.utc - DateTime.now.utc.wday.days).midnight
+  end
+
+  def last_sunday_from(date)
+    date = date.to_datetime
+    (date.utc - date.utc.wday.days).midnight
+  end
+
+  def one_week_since_last_run?
+    DateTime.now.utc - 7.days >= last_run_date
+  end
+
+  def ran_yesterday?
+    last_run_date == yesterday
+  end
+
+  def yesterday
+    @yesterday ||= (DateTime.now.utc - 1.day).midnight
+  end
+
+  def three_days_ago
+    @three_days_ago ||= (DateTime.now.utc - 3.days).midnight
+  end
+
+  def format_entrance_date(entrance)
+    "#{entrance.day}-#{entrance.month}-#{entrance.year}"
+  end
+
+  def format_date(datetime)
+    datetime.strftime(DATETIME_FORMAT)
+  end
+
+  def self.parse_date(formatted_string)
+    DateTime.strptime(formatted_string, DATETIME_PARSE_FORMAT)
+  end
+
+  def parse_date(formatted_string)
+    self.class.parse_date(formatted_string)
+  end
+
+  def last_run_date
+    parse_date(read_values[0][0])
+  end
+
+  def current_end_date
+    @current_end_date ||= last_sunday
+  end
+
+  def end_date_formatted
+    format_date(current_end_date)
+  end
+
+  def read_values
+    parse_redis(redis_key_values)
+  end
+
+  def sorted_date_list
+    read_values.map {|list| Date.parse(list[0]) }.sort
+  end
+
+  def read_yoy_growth
+    parse_redis(redis_key_yoy_growth)
+  end
+
+  def parse_redis(redis_key)
+    JSON.parse(RedisConnection.get(redis_key))
+  end
+
+  def save_values(data)
+    save_to_redis(redis_key_values, data)
+  end
+
+  def save_yoy_growth(data)
+    save_to_redis(redis_key_yoy_growth, data)
+  end
+
+  def save_to_redis(redis_key, data)
+    RedisConnection.set(redis_key, data.to_json)
+  end
+
+  def redis_key_values
+    fail(NotImplementedError, "Implement in subclass")
+  end
+
+  def redis_key_yoy_growth
+    fail(NotImplementedError, "Implement in subclass")
+  end
+
+  def missing_days
+    dates = sorted_date_list
+    missing = (dates.first .. dates.last).to_a - dates
+    missing.reverse
+  end
+
+  def missing_weeks
+    dates = sorted_date_list
+    missing = (dates.first .. dates.last).step(7).to_a - dates
+    missing.reverse
+  end
+
+  def index_for_missing_date(date, values)
+    values.each_with_index do |v, i|
+      return i if Date.parse(v[0]) < date
+    end
+    values.length
+  end
+
+  def calculate_yoy_growth(current_end_date, values, yoy_growth)
+    one_year_ago_value = values[52][1] if values[52]
+    growth = if one_year_ago_value
+      (((values[0][1] - one_year_ago_value.to_f) / one_year_ago_value) * 100).round(2)
+    else
+      nil
+    end
+    yoy_growth.unshift([end_date_formatted, growth])
+    yoy_growth
+  end
+
+  def calculate_yoy_growth_by_segment(current_end_date, values, yoy_growth)
+    if values[52] && values[52][1] != nil
+      one_year_ago_professional_user_value = values[52][1]
+      one_year_ago_k12_user_value = values[52][2]
+      one_year_ago_higher_ed_user_value = values[52][3]
+
+      pro_growth = ((values[0][1] - one_year_ago_professional_user_value.to_f) / one_year_ago_professional_user_value ) * 100
+      k12_growth = ((values[0][2] - one_year_ago_k12_user_value.to_f) / one_year_ago_k12_user_value ) * 100
+      higher_ed_growth = ((values[0][3] - one_year_ago_higher_ed_user_value.to_f) / one_year_ago_higher_ed_user_value ) * 100
+      yoy_growth.unshift([ values[0][0], pro_growth.round(2), k12_growth.round(2), higher_ed_growth.round(2) ])
+    else
+      yoy_growth.unshift([format_date(current_end_date), nil])
+    end
+    yoy_growth
+  end
+
+  def recalculate_yoy_growth_by_segment
+    values = read_values
+    yoy_growth = []
+    values.reverse[52, values.count].each_with_index do |val, i|
+      one_year_ago_professional_user_value = values.reverse[i][1]
+      one_year_ago_k12_user_value = values.reverse[i][2]
+      one_year_ago_higher_ed_user_value = values.reverse[i][3]
+
+      pro_growth = ((val[1] - one_year_ago_professional_user_value.to_f)/ one_year_ago_professional_user_value) * 100
+      k12_growth = ((val[2] - one_year_ago_k12_user_value.to_f)/ one_year_ago_k12_user_value) * 100
+      higher_ed_growth = ((val[3] - one_year_ago_higher_ed_user_value.to_f)/ one_year_ago_higher_ed_user_value) * 100
+      yoy_growth.unshift([val[0], pro_growth.round(2), k12_growth.round(2), higher_ed_growth.round(2)])
+    end
+    yoy_growth
+  end
+
+  def calculate_30_day_rolling_and_growth(values)
+    values_rolling = []
+    last_recorded_day_of_week = Date.parse(values.first[0]).cwday
+    values = values.drop(last_recorded_day_of_week)
+    values.each_with_index { |v, i| values_rolling << [v[0], values[(i..i+30)].reduce(0) { |prev, value| prev + value[1] }] }
+    values_rolling = values_rolling.reverse.drop(30).reverse
+
+    yoy_growth = []
+    values_rolling.each_with_index do |point, index|
+      one_year_ago_visitors = values_rolling[index + 364][1] if values_rolling[index + 364]
+      if one_year_ago_visitors
+        if one_year_ago_visitors == 0
+          yoy_growth << [point[0], 0]
+        else
+          growth = ((point[1] - one_year_ago_visitors.to_f) / one_year_ago_visitors ) * 100
+          yoy_growth << [point[0], growth.round(2)]
+        end
+      else
+        yoy_growth << [point[0], nil]
+      end
+    end
+
+    values_filtered = values_rolling.each_slice(7).map(&:last)
+    yoy_growth_filtered = yoy_growth.each_slice(7).map(&:last)
+
+    [ values_filtered, yoy_growth_filtered ]
+  end
+
+  def paid_account_ids(start_date, end_date)
+    paid_account_orders(start_date, end_date).pluck(:subject_id).uniq
+  end
+
+  def paid_account_orders(start_date, end_date)
+    orders = Order.paid.where(:subject_type => "account").
+      where("created_at <= ?", end_date)
+    unless start_date == :no_start_filter
+      orders = orders.where("created_at > ?", start_date)
+    end
+    orders
+  end
+
+  def rounded_percentage(numerator, denominator, round_precision = 2)
+    ((numerator / denominator.to_f) * 100).round(round_precision)
+  end
+end

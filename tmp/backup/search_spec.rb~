@@ -1,0 +1,120 @@
+require_relative "../spec_helper"
+require_relative "../../lib/closeio"
+require_relative "../../lib/closeio/search"
+require "json"
+
+describe Closeio::Search do
+  subject(:search) { Closeio::Search.new }
+
+  describe "#search" do
+    context "default skip info" do
+      before do
+        expect(search.api).to receive(:get).
+          with("search", 0, 100).
+          and_return(OpenStruct.new(:body => {"total_results" => 130, "has_more" => true, "data" => []}.to_json))
+      end
+
+      it "updates total" do
+        search.search("search")
+        expect(search.total).to eql(130)
+      end
+      it "updates has more" do
+        search.search("search")
+        expect(search.has_more?).to eql(true)
+      end
+      it "updates data" do
+        search.search("search")
+        expect(search.data).to be_empty
+      end
+      it "updates count" do
+        search.search("search")
+        expect(search.count).to eql(0)
+      end
+    end
+    context "changed skip info" do
+      it "adds skip info to the query" do
+        search.skip = 100
+        expect(search.api).to receive(:get).
+          with("search", 100, 100).
+          and_return(OpenStruct.new(:body => {"total_results" => 130, "has_more" => true, "data" => []}.to_json))
+        search.search('search')
+      end
+    end
+  end
+
+  describe "#has_more?" do
+    context "there are more leads" do
+      before do
+        expect(search.api).to receive(:get).
+          with("search", 0, 100).
+          and_return(OpenStruct.new(:body => {"total_results" => 430, "has_more" => true, "data" => []}.to_json))
+      end
+      it "returns true" do
+        search.search("search")
+        expect(search.has_more?).to eql(true)
+      end
+    end
+    context "there are no more leads" do
+      before do
+        expect(search.api).to receive(:get).
+          with("search", 0, 100).
+          and_return(OpenStruct.new(:body => {"total_results" => 30, "has_more" => false, "data" => []}.to_json))
+      end
+      it "returns false" do
+        search.search("search")
+        expect(search.has_more?).to eql(false)
+      end
+    end
+  end
+
+  describe "#next" do
+    context "there are more leads" do
+      before do
+        expect(search.api).to receive(:get).
+          with("search", 0, 100).
+          and_return(OpenStruct.new(:body => {"total_results" => 430, "has_more" => true, "data" => []}.to_json))
+
+        expect(search.api).to receive(:get).
+          with("search", 100, 100).
+          and_return(OpenStruct.new(:body => {"total_results" => 430, "has_more" => true, "data" => []}.to_json))
+
+      end
+      it "searches for additional leads" do
+        search.search('search')
+        search.next
+      end
+    end
+    context "there are no more leads" do
+      before do
+        expect(search.api).to receive(:get).
+          with("search", 0, 100).
+          and_return(OpenStruct.new(:body => {"total_results" => 30, "has_more" => false, "data" => []}.to_json))
+        search.search('search')
+      end
+      it "does not search for leads" do
+        expect(search.api).not_to receive(:get)
+        search.next
+      end
+      it "returns nil" do
+        expect(search.next).to eql(nil)
+      end
+    end
+  end
+
+  describe "#key_leads" do
+    it "calls search with the proper query" do
+      query = Closeio::Search::KEY_LEAD_STATUSES.map do |s|
+        "status:\"#{s}\""
+      end
+      expect(search).to receive(:search).with(query.join(" OR "))
+      search.key_leads
+    end
+  end
+
+  describe "#former_customers" do
+    it "calls search with the proper query" do
+      expect(search).to receive(:search).with("status:\"Former Customer\"")
+      search.former_customers
+    end
+  end
+end

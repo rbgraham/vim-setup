@@ -1,0 +1,65 @@
+=title "Account: #{@account.pretty_name}"
+%p
+
+%p
+  Report generated at:
+  =Time.now.to_s(:medium)
+
+
+%table
+  %thead
+    %tr
+      %th Metric
+      %th Value
+  %tbody
+    %tr
+      %th 1. Total subusers on the account
+      %td=number_with_delimiter @account.registered_users.count
+
+    %tr
+      %th 2. Subusers who authenticated during the last month
+      %td=number_with_delimiter @account.registered_users.where('users.last_authenticated_at > ?', 1.month.ago).count
+
+    %tr
+      %th 3. Total number of polls from all users on the account
+      %td=number_with_delimiter @account.polls.count
+
+    %tr
+      %th 4. Total responses since the account was created
+      %td=number_with_delimiter @account.results_counter
+    - if @quotas
+      %tr
+        %th 5. Total registered participants on the account
+        %td=number_with_delimiter (@participants_count)
+
+      %tr
+        %th 6. Approximate total responding users in the past 30 days 
+        %td=number_with_delimiter (@sales_quota_responding_users)
+  %tfoot
+    %tr
+      %td(colspan=2 style='font-size: smaller; font-weight: normal;')
+        %p
+          %strong Interpretation guide
+        %p
+          %strong 1. Total subusers on the account
+          In Poll Everywhere terminology, "users" are people who can create polls under your license.  We use the term "participants" to describe the people who respond to polls. This number, therefore, is useful only as a measure of the number of people at your orginization who have access to use the tool. Our enterprise licensing fees do not depend on this number (we do not license per-seat).
+        %p
+          %strong 2. Subusers who authenticated during the last month
+          This is the number of users on your account who performed an action that required them to be "logged in" first (such as viewing a list of the polls they've created) in the last 30 days.
+        %p
+          %strong 3. Total number of polls from all users on the account
+          This is a count of the <em>current</em> number of polls created by all users on your account. Keep in mind that it is NOT a good metric to measure ROI or usage, it simply measures the number of polls that have been created but not deleted. For example, consider a very active account. It's users create 900 polls in a month, but their corporate data policies specify they must delete polls when finished. They delete 800 of the 900 polls. This metric then will be 100 greater than it was last month. If another account only made 100 polls, and didn't delete any, this metric would also be 100 greater than it was last month. Also, keep in mind that this is a "current total" metric - it is not counted "per month", it is just a view of the total at the point in time when the report was generated.
+        %p
+          %strong 4. Total responses since the account was created
+          This is a count of the total number of responses received by by all polls from all users on your account, since the creation of the account. Unlike the polls count above, this count only increments, and is not decremented when a poll and its responses are deleted. Keep in mind that this is a "current total" metric - it is not counted "per month", it is just a view of the total at the point in time when the report was generated. This can be a good metric to measure ROI or usage if it's understood in the context of the time since generating the last report (and the last report's value is known). For example, if you generate this report every month, and last month this "total responses" was 1.1 million, and now it is 1.2 million, you can say with certainty that Poll Everywhere was used to collect 100,000 responses in the last month.
+        - if @quotas
+          %p
+            %strong 5. Total registered participants on the account
+            This is a count of the total number of participants registered on the account not including the account subusers recognized in 1. Participants are those individuals that respond to polls and the registered participants are those that signup for a Poll Everywhere account as well.
+          %p
+            %strong 6. Approximate total responding users in the past 30 days
+            This is a rough count of total participants that responded to a poll in the past 30 days. We divide the rough number of responding devices by 1.5 to arrive at an approximate user count that should favor the customer. This is used for sales quotas. 
+
+
+-content_for :sidebar do
+  =render :partial => 'admin/accounts/widgets/actions'

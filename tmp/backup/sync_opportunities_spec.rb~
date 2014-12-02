@@ -1,0 +1,34 @@
+require_relative '../../lib/closeio/sync_opportunities'
+
+describe Closeio::SyncOpportunities do
+  subject(:sync) { Closeio::SyncOpportunities.new }
+  let(:opp) { {"lead" => {"custom" => {"z_account_id" => 1}}} }
+  let(:opp2) { {"lead" => {"custom" => {"z_account_id" => 2}}} }
+  let(:opportunities) { {next: nil, 
+                        total_results: 10, data: [opp, opp2], 
+                        has_more: false} }
+
+  let(:account_hash) { {:id => 0, 
+                        :owner_id => 1, 
+                        :owner_email => "bob@polleverywhere.com"} }
+  let(:account) { Closeio::Pollev::Account.new(account_hash) }
+
+
+  describe "#run" do
+    it "calls update for each opportunity" do
+      stub_request(:get, "https://abc123:@app.close.io/api/v1/opportunity/?_limit=100&_skip=0&query=status_type:active").
+         with(:headers => {'Accept'=>'application/json'}).
+         to_return(:status => 200, :body => opportunities.to_json, :headers => {})
+
+      expect(Closeio::Opportunity).to receive(:new).with(opp) { opp }
+      expect(Closeio::Opportunity).to receive(:new).with(opp2) { opp2 }
+
+      expect(opp).to receive(:update)
+      expect(opp2).to receive(:update)
+
+      expect(sync).to receive(:find_account).twice { account_hash }
+
+      sync.run
+    end
+  end
+end

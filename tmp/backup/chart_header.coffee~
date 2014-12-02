@@ -1,0 +1,169 @@
+#= require templates/chart_header
+#= require views/mixins/_scaler
+
+PollEv.namespace "PollEv.Visualization.View", (View) ->
+
+  class View.ChartHeader extends View.Base
+    className: 'header'
+    tagName: 'tr'
+    modules: 'Util Scaler Formattable'
+
+    appEvents:
+      'finishedRendering': 'customizeHeaderScale'
+      'resize': 'scaleImage'
+
+    initialize: (options) ->
+      super
+
+      @flashOptions = @model.flashOptions()
+      @_bindEvents()
+
+    _bindEvents: =>
+      optionsEvents =
+        "change:showTitle": @renderTitle
+        "change:headerTitleColor": @customizeTitleColor
+
+        "change:headerBGColorTop": @customizeBackgroundColor
+        "change:headerBGColorBottom": @customizeBackgroundColor
+        "change:headerTransparent": @customizeBackgroundColor
+
+        "change:headerLogoUrl": =>
+          @clearImageCache()
+          @render()
+        "change:headerLogoPlacement": @render
+
+        "change:headerScale": @customizeHeaderScale
+
+      for evt, handler of optionsEvents
+        @listenTo @flashOptions, evt, handler
+
+      @listenTo @model, "change:title", @renderTitle
+
+    customizeBackgroundColor: =>
+      backgroundColor = @compatibleColor 'bgColor'
+
+      # need to reverse these to match Flash
+      gradientBottom = @compatibleColor 'headerBGColorTop'
+      gradientTop = @compatibleColor 'headerBGColorBottom'
+
+      if @flashOptions.get("headerTransparent") || gradientTop == gradientBottom == backgroundColor
+        @killCSSRule '.chart .data .header th'
+      else
+        @verticalGradient '.chart .data .header th', gradientTop, gradientBottom, @flashOptions.getColorARGB('headerBGColorTop'), @flashOptions.getColorARGB('headerBGColorBottom')
+
+    renderTitle: =>
+      # Handle document title here as well since we're re-rendering title
+      # if we have newlines in the title, strip those out
+      # strip out emoji until we can get a unicode mapping, since title tags in
+      # modern browsers support emoji unicode values
+      window.model = @model
+      document.title = @model.cleanTitle " ", {emoji: "strip"}
+
+      @$el.toggleVisibility @flashOptions.get("showTitle")
+
+      #title = @model.cleanTitle("<br/>")
+      title = @model.get('title')
+
+      # gross way of dealing with
+      # newlines and preventing
+      # XSS attacks
+      if (lines = title.split("<br/>")).length
+        $wrapper = $("<span></span>")
+
+        wrappedLines = _.each lines, (l, index) ->
+          $span = $("<span></span>")
+          $span.html(l)
+          $wrapper.append $span
+          $wrapper.append "<br/>" unless index is lines.length - 1
+
+      @$(".title").html $wrapper # Honor newline characters
+
+    customize: =>
+      @customizeBackgroundColor()
+      @customizeTitleColor()
+      @customizeHeaderScale()
+
+    customizeTitleColor: =>
+      color = @flashOptions.getColorHex('headerTitleColor')
+
+      @setCSSProperty '.chart .data .header .title', 'color', color
+
+    customizeHeaderScale: =>
+      scale = @flashOptions.get('headerScale')
+      if scale <= 1
+        targetSize = @normalize(scale, 0.4, 1, 0.62, 1.45)
+
+        @setCSSProperty '.chart .data .header', 'fontSize', "#{targetSize}em"
+        @setCSSProperty '.chart .voting_instructions', 'fontSize', "#{targetSize}em"
+
+        @scaleImage()
+        @triggerEvent 'resize'
+      else
+        @killCSSRule '.chart .data .header'
+        @killCSSRule '.chart .voting_instructions'
+
+    scaleImage: =>
+      if ($img = @$('img')).length
+        if @image
+          scale = @flashOptions.get('headerScale')
+          if scale <= 1
+            targetSize = @normalize(scale, 0.4, 1, 0.2, 1)
+
+            $img.css
+              height: "#{targetSize * @image.height}px"
+              width: "#{targetSize * @image.width}px"
+          else
+            $img.css
+              height: ''
+              width: ''
+
+          # Scale based on @media-query like font sizing
+          scale = @currentScale()
+          $img.css
+            height: $img.height() * scale
+            width: $img.width() * scale
+        else
+          @image = new Image()
+          @image.onload = =>
+            @scaleImage()
+            @triggerEvent 'resize'
+          @image.src = $img.attr('src')
+
+    # TODO fix image sizing here, then call renderLogo instead of
+    # render on the corresponding flashOptions changes
+    renderLogo: =>
+      {
+        headerLogoPlacement
+        headerLogoUrl
+      } = @flashOptions.attributes
+
+      headerLogoUrl = null unless headerLogoUrl?.length
+
+      @$("th").attr("class", headerLogoPlacement)
+      @$("th").addClass("no-logo") unless headerLogoUrl
+
+      if headerLogoUrl
+        # If the image comes from our proxy then use it directly.
+        # Otherwise patch it through the proxy for SSL to work
+        url = URI(headerLogoUrl).protocol("").toString()
+        if !headerLogoUrl.match(PollEv.Util.UPLOADED_IMAGE_REGEX)
+          url = URI(PollEv.env.get('image_proxy_url')).addQuery('url', headerLogoUrl).toString()
+
+        @$(".image").html "<img src=#{url} />"
+      else
+        @$(".image").html("")
+
+    render: =>
+      @$el.html @template('chart_header')
+
+      @renderLogo()
+      @renderTitle()
+
+      @customize()
+
+      @
+
+    # The image changed, so we need to clear out the in-memory cached represenation
+    # of it so the height/width ratio isn't applied to the new image.
+    clearImageCache: =>
+      @image = undefined

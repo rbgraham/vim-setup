@@ -1,0 +1,381 @@
+load "tasks/emoji.rake"
+
+namespace :polleverywhere do
+  desc "Sets up logging for other rake tasks. Forces stdout rather than log/{env}.log"
+  task :rails_rake_logger => :environment do
+    logger = Logger.new($stdout)
+    logger.level = Logger::INFO
+    Rails.logger = logger
+  end
+
+  namespace :billing do
+    desc "Bill accounts that are to be billed_at today"
+    task :daily => :rails_rake_logger do
+      Account.bill_active_accounts!
+    end
+
+    desc "Send reminder emails that are turned on 2 days before next billing date"
+    task :send_reminders => :rails_rake_logger do
+      Account.send_billing_reminders
+    end
+
+    desc "Send reminder emails for annual plans 1 month or 2 days before next billing date"
+    task :send_annual_reminders => :rails_rake_logger do
+      Account.send_annual_billing_reminders
+    end
+
+    desc "Attempt to re-charge credit card 7 days after billing failure. If not, attempt downgrade."
+    task :auto_downgrade_failed_payment => :rails_rake_logger do
+      Account.auto_downgrade_failed_payment!
+    end
+
+    desc "Active accounts that downgraded to a free plan since they were marked inactive on a paid plan"
+    task :transition_active_inactive_accounts => :rails_rake_logger do
+      Account.transition_active_inactive_accounts
+    end
+  end
+
+  namespace :accounts do
+    desc "Remove Rainforest QA test accounts and lingering loadtest related accounts"
+    task :remove_test_accounts => :rails_rake_logger do
+      users = User.where("email LIKE '%@e.rainforestqa.com' OR email LIKE '%@stresstest.polleverywhere.com'")
+      total = users.length
+      failed = 0
+      puts "Destroying #{total} users"
+      users.each do |user|
+        begin
+          user.account.destroy! if user.account
+          user.destroy!
+        rescue => e
+          puts "User failed to delete. #{user}"
+          puts "Exception: #{e}"
+          failed += 1
+        end
+      end
+      puts "Destroyed #{total-failed} users. #{failed} failed."
+    end
+
+    desc "Promote participants to be full subusers on certain enterprise plans"
+    task :promote_enterprise_participants => :rails_rake_logger do
+      [
+        1166487 # Deloitte
+      ].each do |id|
+        @account.promote_participants_to_subusers! if @account = Account.find(id)
+      end
+    end
+
+    desc "Removes sub-users from accounts that are over their sub-user limit"
+    task :remove_sub_users => :rails_rake_logger do
+      puts "Removing sub-users from accounts that have more sub-users than they are allowed"
+      finder_sql = "select a.id from accounts a left join users u on u.account_id = a.id group by a.id, a.maximum_users having count(u.id) > a.maximum_users"
+      Account.connection.select_values(finder_sql).each do |account_id|
+        account = Account.find(account_id)
+
+        # How many to remove?
+        remove_count = account.registered_users.count - account.maximum_users
+        puts "Removing #{remove_count} users from account ID #{account_id}"
+
+        # Let's start removin' 'em!
+        account.only_registered_users_and_admins[0, remove_count].each do |user|
+          # Check if we have any polls
+          if user.polls.count > 0
+            user.account = Account.new
+          else
+            user.account = nil
+          end
+
+          unless user.save
+            puts "User ID #{user.id} is invalid. Destroying."
+            user.destroy
+          end
+        end
+      end
+    end
+  end
+
+  namespace :polls do
+    desc "Recounts the cache for options.results_count and polls.results count for each poll"
+    task :repair_results_count => :rails_rake_logger do
+      puts "Repairing poll results counts "
+      Poll.find_in_batches do |polls|
+        polls.each do |poll|
+          print "."
+          poll.update_counters!
+          poll.accumulators.each do |acc|
+            acc.update_attribute(:results_count, acc.results.count)
+          end
+        end
+      end
+    end
+
+    desc "Updates auto_close_at field and/or closes polls (or cycles keywords) from polls that are inactive"
+    task :auto_close => :rails_rake_logger do
+      Poll::AutoClose.run
+    end
+
+    desc "Releases the keywords from polls that have been closed for more than X number of days"
+    task :release_keywords => :rails_rake_logger do
+      Poll::AutoReleaseKeywords.run
+    end
+
+    desc "Apply an explicit start/stop date to open/close polls"
+    task :scheduled_start_stop => :rails_rake_logger do
+      ScheduledPollAction.scheduled_start_stop!
+    end
+    desc "Apply an explicit start/stop date to open/close polls. Loads only the minimal necessary files to queue up the job for Quebert."
+    task :scheduled_start_stop_async do
+      # This async version doesn't load the whole Rails environment. Under
+      # Ruby 1.9, loading the rails environment is slow. But we wanted to run
+      # this rake task every minute. That's just too much CPU. On staging, it
+      # can't even finish within a minute, so it basically takes down the whole
+      # server.
+      # By only loading what is necessary to queue up a Quebert job, the rake
+      # task finishes much more quickly.
+      require File.expand_path(File.join(File.dirname(__FILE__), '..', '..', 'app', 'jobs', 'scheduled_poll_action_job'))
+
+      ScheduledPollActionJob.new.enqueue
+    end
+
+    namespace :demos do
+      desc "Clear some polls daily"
+      task :clear_infrequent => :rails_rake_logger do
+        [
+          # 'MTQyOTM5NjExOQ', # Customer call tagging MCP
+          'LTEyMTg5NDM0NDI',  # Twitter demo FTP
+          'LTIwNTAzODI4MDc',  # Twitter demo MCP
+          'RS6AaCtL2qPNRxA'   # Church landing page
+        ].each do |permalink|
+          Poll.find_by_permalink(permalink).clear!
+        end
+      end
+
+      desc "Clear some polls every 10 minutes"
+      task :clear_frequent => :rails_rake_logger do
+
+        # SMS Ping Test
+        Poll.find_by_permalink('LTgxMzUyNzM2MA').clear!
+        # Twitter Ping Test
+        Poll.find_by_permalink('LTE2NTU0NjQzMzg').clear!
+        # Front page MCP: Favorite Animal
+        @mcp = Poll.find_by_permalink('LTc1NDgzOTIzNA')
+
+        @mcp.clear!
+        @fake_participant = Participant.find_by_phone_number('15555555555')
+
+        [1,3,2].each_with_index do |votes, i|
+          votes.times do
+            @mcp.accumulators[i].capture! do |result|
+              result.participant = @fake_participant
+            end
+          end
+        end
+
+        @ftp = Poll.find_by_permalink('MTczMzA2OTE4')
+
+        # Equivalent to
+        # `/usr/bin/curl -X DELETE "http://jeff:heYKeed0@www.polleverywhere.com/free_text_polls/#{permalink}/clear?archive=0"`
+        @ftp.clear!   # Font page: Text wall
+
+        # Pump it up full of messages
+
+        fakes = [ 'texting my powerpoint....', 'bork bork bork', 'dunno', '^-^  <-- Happy cat on your homepage',
+          Time.now.strftime("Sending at %M past the hour"), 'I have Robophobia', 'Alec is the hottest at PollEv',
+          Time.now.strftime("today is %A"), 'hellllooooooo', '(-B', 'my school is going crazy they let me text',
+          'Is this fast?', 'this is great', 'hello', 'Help, my mom is now texting. She\'s 82 years old.', 'bark bark I\'m a dog',
+          'this is pretty awesome', 'Hi from Barcelona', 'nice', '<knock> <knock> this thing on?', 'heckler here',
+          'hi mom', 'please help, Im stuck at a boring job', 'used this at church', 'i need to be getting back to work',
+          'how does this work?', 'rawr', 'clever', 'klinkensputzer )(*&^%$##$%^&*', 'my dog isnt texting yet',
+          'shout, shout, let it all oout', 'I love Kerry M.!', 'poll everywhere, u complete me', 'would you pass the salt?',
+          'Hey Girl. Congrats on achieving 99.99% server uptime. - Ryan Gosling', 'if a forrest falls in the middle of a tree...',
+          'honey badger doesn\'t text', 'love it', 'I enjoy potatoes', 'just testing', 'its shake-n-bake and i helped',
+          'Looks like about 3 seconds from phone to screen', 'its 5P somewhere', 'attendance taking?', 'works!'
+        ]
+
+        # Equivalent to
+        # `/usr/bin/curl "http://www.polleverywhere.com/sms/f4229e9637d8ddc77a4a45de6cc2cd93.sms?body=SHOUT%20Wow%20this%20is%20really%20fast&from=5555555555&to=22333"`
+
+        2.times do
+          @ftp.accumulator.capture! do |result|
+            result.value = fakes.sample
+            result.participant = Participant.find_by_phone_number('15555555555')
+          end
+        end
+      end
+    end
+  end
+
+  namespace :broadcasts do
+    desc "Send all broadcast messages scheduled to send in the past or the next 5 minutes to individuals or lists"
+    task :send_scheduled => :rails_rake_logger do
+      Broadcast.send_scheduled_broadcasts
+    end
+  end
+
+  namespace :measurements do
+    desc "Maintains a Redis list of the last 60-days worth of user activity counts from MySQL"
+    task :user_activity => :rails_rake_logger do
+      Measurements::UserActivity.update_cache
+    end
+  end
+
+  desc 'Copy data from accumulators.correct_response to accumulators.correct'
+  task :correct_response_to_correct => :rails_rake_logger do
+    Accumulator.find_in_batches do |polls|
+      Accumulator.where(:id => polls.map(&:id), :correct_response => false).
+        update_all(:correct => "a^")
+      Accumulator.where(:id => polls.map(&:id), :correct_response => true).
+        update_all(:correct => nil)
+      print '.'
+    end
+    puts 'Done'
+  end
+
+  namespace :keyword_apoc do
+    desc 'Results processed vs currpoll changes'
+    task :currpoll_change_stats => :rails_rake_logger do
+      DatabaseConnection.with_slave_db do
+        header =  %w(
+          curr_stat_id
+          prev_stat_id
+          curr_poll_type
+          prev_poll_type
+          curr_poll_result_count
+          prev_poll_result_count
+          prev_switch_at
+          switch_at
+          result_range_start_at
+          result_range_end_at
+          result_for
+          modality
+          source_name
+          source_phone_number
+          participant_phone_number
+          participant_carrier_id
+          participant_carrier_name
+          time_from_switch
+        ).join(',')
+        buffer = [header]
+
+        date_range = Proc.new do |curr|
+          earliest = [curr.created_at - 10.minutes, curr.prev.try(:created_at)].compact.max
+          latest = [curr.created_at + 10.minutes, curr.next.try(:created_at), curr.expires_at].compact.min
+
+          earliest..latest
+        end
+
+        near = Proc.new { |curr| {:created_at => date_range.call(curr)} }
+
+        puts "#{CurrpollStat.count} CurrpollStats will be considered for analysis..."
+        stats = CurrpollStat.all.select do |curr|
+          print '.'
+          prev = curr.prev
+
+          prev &&
+            prev.poll &&
+            # TODO: We could exclude this if we are interested in results coming in early (not just in results coming in late).
+            Result.where(near.call(curr).merge(:poll_id => prev.poll_id)).count(:all) > 0
+        end
+        puts 'Done'
+
+        puts "#{stats.count} CurrpollStats will be analyzed"
+
+        buffer += stats.map do |curr|
+          prev = curr.prev
+
+          curr_rs = if curr.poll_id
+            Result.where(near.call(curr).merge(:poll_id => curr.poll_id))
+          else
+            []
+          end
+          prev_rs = Result.where(near.call(curr).merge(:poll_id => prev.poll_id))
+          rs = curr_rs + prev_rs
+
+          puts "Results to analyze: #{rs.length}"
+
+          # These fields don't depend on the individual result
+          prefix_fields = [
+            curr.id.to_s,
+            prev.id.to_s,
+            curr.poll.class.name,
+            prev.poll.class.name,
+            curr_rs.length.to_s,
+            prev_rs.length.to_s,
+            prev.created_at.utc.to_s(:db),
+            curr.created_at.utc.to_s(:db),
+            date_range.call(curr).first.utc.to_s(:db),
+            date_range.call(curr).last.utc.to_s(:db)
+          ].join(',')
+
+          row = rs.map do |r|
+            print '.'
+            result_for = case r.poll_id
+                         when nil         ; 'nil'  # Don't want it set to 'curr' if curr.poll is also nil
+                         when curr.poll_id; 'curr'
+                         when prev.poll_id; 'prev'
+                         else             ; ''
+                         end
+
+            [
+              prefix_fields,
+              result_for,
+              r.modality.to_s,
+              r.source.try(:name).to_s,
+              r.source.try(:phone_number).to_s,
+              r.participant.try(:phone_number).to_s,
+              r.participant.try(:carrier_id).to_s,
+              r.participant.try(:phone_carrier).to_s,
+              (r.created_at - curr.created_at).to_s
+            ].join(',')
+          end
+          puts 'Done'
+          row
+        end.compact
+
+        puts buffer
+      end
+    end
+  end
+
+  desc 'Clear out existing true values from renamed column users.automatic_timer'
+  task :default_automatic_timer => :rails_rake_logger do
+    User.find_in_batches do |users|
+      User.where(:id => users.map(&:id)).update_all(:automatic_timer => false)
+    end
+    puts 'Done'
+  end
+
+  desc 'Convert users who have not logged in the past 4 months to html5'
+  task :convert_to_html5 => :rails_rake_logger do
+    User.find_in_batches do |users|
+      User.where(:id => users.map(&:id)).
+        where("last_authenticated_at < '2013-05-17'").
+        update_all("labs_mask = labs_mask | 8 ")
+    end
+    puts 'Done'
+  end
+
+  desc "Save results of KPI queries to an external repo"
+  task :publish_kpi_results => :rails_rake_logger do
+    Kpi::ResultsPublisher.new.publish
+  end
+
+  namespace :plan_sets do
+    desc "Add new 4- and 5-Tier Retail PlanSets"
+    task :add_new_retail do
+      require_relative "../../db/seeds/plans"
+      SeedMe.new_plans
+    end
+  end
+
+  # One-off rake tasks go here. Be sure to delete them when you are finished.
+  namespace :temp do
+    # Delete this after it has been run on all developers' machines.
+    desc "Update plans/accounts with new features"
+    task :set_custom_session_keywords => :rails_rake_logger do
+      Account.select(:id).where(:plan_id => [5, 7, 10, 12, 13, 18, 19, 20, 21, 22, 29, 32, 33, 35, 37, 39]).find_in_batches do |batch|
+        Account.where(:id => batch.map(&:id)).update_all(:custom_session_keywords => true)
+      end
+      Plan.where(:id => [5, 7, 10, 12, 13, 18, 19, 20, 21, 22, 29, 32, 33, 35, 37, 39]).update_all(:custom_session_keywords => true)
+    end
+  end
+end

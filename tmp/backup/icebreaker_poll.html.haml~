@@ -1,0 +1,109 @@
+-title "Poll Everywhere Icebreaker Poll Contest"
+-description "Poll Everywhere Icebreaker Poll Contest 2014. Show us your icebreaker poll. You could win an iPad Air!"
+-body_class 'clear-header'
+
+%section.light-blue.ice-background#into-contest
+  .numeric-grid.container
+    .span-7
+      %h1 Poll Everywhere Icebreaker Poll Contest 2014
+      %h2.subtitle Show us your icebreaker poll. You could win an iPad Air!
+      %p Icebreaker polls jumpstart your presentation. They get people tuned in, laughing and talking, and most importantly, they get the poll code locked into your participants’ phones, ready to roll when it’s time for some serious polling!
+      %a.medium-blue.button(href="#apply") Enter your icebreaker here!
+
+%section.light-blue#turning-five
+  .numeric-grid.container
+    .span-6.pre-3.trailer.leader
+      %hr.blue
+    .span-6
+      %h1 So many prizes!
+      %h2.subtitle And you could win one!
+      %p 
+        We already know you guys are super sly pollsters. That means picking one awesome icebreaker poll out of 
+        %em thousands
+        of awesome icebreaker polls is going to be crazy hard. Our indecisiveness could be good news for you, because we intend to address this issue by giving away a buttload of prizes. Behold...
+
+    .span-3.centered
+      %aside.medium- blue
+        %h1 1st Place
+        %a.prize-link(href="http://www.google.com/url?q=http%3A%2F%2Fstore.apple.com%2Fus%2Fbuy-ipad%2Fipad-air-2&sa=D&sntz=1&usg=AFQjCNFT3mZts10Cz_y4RUfmhfp6vmqzvA")
+          %h2 iPad Air 2
+      %aside.medium- blue
+        %h1 3rd Place
+        %a.prize-link(href="http://www.google.com/url?q=http%3A%2F%2Fbuy.stumptowncoffee.com%2Fjourneyman.html&sa=D&sntz=1&usg=AFQjCNGtJoSsorGnoGHT2lTIcSBrpg6GbQ")
+          %h2 Coffee Brew Set
+
+    .span-3.last.centered
+      %aside.medium- blue
+        %h1 2nd Place
+        %a.prize-link(href="http://www.google.com/url?q=http%3A%2F%2Fstore.apple.com%2Fus%2Fbuy-ipad%2Fipad-mini-2&sa=D&sntz=1&usg=AFQjCNHSdzDcuKWM8MsN4YmEMRTmc8dDog")
+          %h2 iPad Mini 2
+      %aside.medium- blue
+        %h1 4th Place
+        %a.prize-link(href="http://www.google.com/url?q=http%3A%2F%2Fwww.amazon.com%2FAccoutrements-12027-Horse-Head-Mask%2Fdp%2FB003G4IM4S&sa=D&sntz=1&usg=AFQjCNFD1PZbCKlSVk2o_VTaNjuELSl99w")
+          %h2 Horse Mask &
+          %h2 PollEv Swag
+
+%section#contest-details
+  .numeric-grid.container
+    .span-12
+      %h1 Best polls go on our homepage!
+      %h2.subtitle Eternal fame and glory!
+    .span-6.leader
+      %iframe.shadow(src="https://www.polleverywhere.com/multiple_choice_polls/JqKPsQlsStsl5cI" width="100%" height= "250px")
+      %a(name="apply")
+    .span-6.last
+      %p
+        If your icebreaker poll makes it into the top three on our list, we’ll give it a whole day to shine on our homepage, and all the world will bask in the glory of your icebreaker cleverness. The poll that gets the most votes on its day of days wins the biggest prize!
+      %p Some hints on what we’re looking for:
+      %ul.checklist
+        %li A great question or prompt that makes people want to jump in
+        %li An attractive design (Besides our gorgeous blue/white default)
+        %li Response options that get people thinking-- either multiple choice, open response, or clickable image
+    .span-6.pre-3.trailer.leader
+      %hr.medium-gray
+    .span-12
+      %h1 DEADLINE to submit is Sunday, November 16th, at midnight. 
+      %h2.subtitle So get started, pollsters!
+    .span-6.leader
+      -if flash[:error]
+        %section.pink(style='padding:10px')
+          %h5
+            =flash[:error]
+      =form_tag icebreaker_submission_path, :class => "formtastic" do
+        %fieldset.inputs
+          %ol.icebreaker-form
+            %li
+              =label_tag :name, "Name"
+              =text_field_tag :name, nil, :style => 'width: 100%', :class => 'required', :pattern => '.+', :'data-message' => "We kinda need your name", :required => true
+            %li(style="display: none;")
+              =label_tag :email, "Email"
+              =text_field_tag :email, nil
+            %li
+              =label_tag ContactController::SPAM_PROOF_EMAIL_FIELD_NAME, "Email"
+              =text_field_tag ContactController::SPAM_PROOF_EMAIL_FIELD_NAME, nil, :class => 'required', :pattern => EmailAddress::EMAIL_PATTERN_JS, :'data-message' => "That email doesn't seem right", :type => 'email', :required => true
+            %li
+              =label_tag :poll_link, "Link To Your Poll"
+              =text_field_tag :poll_link, nil, :style => 'width: 100%', :class => 'required', :pattern => '\S+multiple_choice_polls\/\S+', :'data-message' => "That link doesn't look right. <br> The link should look something like: http://www.polleverywhere.com/<br><strong>multiple_choice_polls</strong>/1234abcd", :required => true
+            %li
+              =label_tag :blurb, "Tell us a bit about yourself or your poll (optional)"
+              =text_area_tag :blurb, nil, :style => 'width: 100%'
+            %li.checkbox-fix
+              =check_box_tag :terms, nil, false, :required => true, :'data-message' => "You must agree to the terms and conditions."
+              I agree to the
+              =link_to "terms and conditions.", contest_rules_path
+            %li
+              %br
+              =submit_tag  "Enter the contest", {:class => 'medium-blue' }
+    .span-6.last.team-image.centered
+      .team-quote
+        %em
+          Thanks for making our jobs so freaking fantabulous.
+          %br
+          Your forever fans,
+        %br
+        %strong The Poll Everywhere Team
+      =image_tag('icebreaker/halloweenteam.jpg')
+
+%section.light-blue.logged-out
+  %h1.centered(style='padding-top:10px') Don't have an account?
+  =render 'shared/psu_button_with_sidetext', { :sidetext_copy => "It takes 30 seconds, then you can participate in our contest!", :button_color => 'medium-blue' }

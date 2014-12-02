@@ -1,0 +1,6 @@
+[submodule "bundle/commmand-t"]
+	path = bundle/commmand-t
+	url = git://git.wincent.com/command-t.git
+[submodule "bundle/bundle/commmand-t"]
+	path = bundle/bundle/commmand-t
+	url = git://git.wincent.com/command-t.git

@@ -1,0 +1,21 @@
+require "colorize"
+
+require_relative "../closeio"
+require_relative "api_sub_object"
+
+# Represents an Opportunity from Close.io
+class Closeio::Opportunity < Closeio::ApiSubObject
+  def update(account)
+    if account && account.respond_to? :serializer
+      lead.update(account.serializer.to_h)
+    else
+      Closeio.logger.warn "Can't find account to update #{@attributes["lead_name"]}.".red
+    end
+  end
+
+  def lead
+    if @attributes['lead_id']
+      @lead ||= Closeio::Search.new("lead").search(@attributes['lead_id']).first
+    end
+  end
+end

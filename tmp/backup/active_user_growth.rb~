@@ -1,0 +1,50 @@
+# PRECONDITIONS: Must be logged into Google Analytics
+# `Analytic.login_to_google_analytics`
+class Kpi::ActiveUserGrowth < Kpi::Base
+  SEGMENT_ID = "IrrAEqMmRtWo_X-2q031Yg"
+
+  def values_json
+    values, yoy_growth = *read_or_update_values
+    Kpi::Highcharts::value_and_growth_graph_json(
+      "Active Users", "Active Users", values, yoy_growth)
+  end
+
+  private
+
+  def read_or_update_values
+    values = read_values
+    unless ran_yesterday?
+      entrances.each do |entrance|
+        values.unshift([format_entrance_date(entrance), entrance.visitors.to_i])
+      end
+      save_values(values)
+    end
+
+    missing = missing_days
+    unless missing.empty?
+        missing.each do |missed|
+            entrance = query_ga(missed - 3.days, missed).to_a.last
+            values.insert(index_for_date(missed, values),
+                          [format_entrance_date(entrance), 
+                          entrance.visitors.to_i])
+        end
+        save_values(values)
+    end
+
+    calculate_30_day_rolling_and_growth(values)
+  end
+
+  def entrances
+      [query_ga(three_days_ago, yesterday).to_a.last]
+  end
+
+  def query_ga(start, finish)
+    Analytic::Actives.results(
+      Analytic.profile, :segment_id => SEGMENT_ID,
+      :start_date => start, :end_date => finish)
+  end
+
+  def redis_key_values
+    "admin:business:actives:values"
+  end
+end

@@ -1,0 +1,76 @@
+require_relative '../spec_helper'
+require_relative '../../lib/closeio/pollev/account'
+require_relative '../../lib/closeio/sync'
+
+describe Closeio::Sync do
+  let(:importable_plan_id) { Closeio::Sync::PLANS_TO_IMPORT[0] }
+
+  describe "#run" do
+    let(:lead) do
+      double "lead",
+        :id => "lead_abc123",
+        :create_opportunities => [],
+        :create_tasks => []
+    end
+
+    let(:wrong_plan_account) do
+      Closeio::Pollev::Account.new(:id => 1, :plan_id => -1)
+    end
+    let(:importable_account) do
+      Closeio::Pollev::Account.new(:id => 2, :plan_id => importable_plan_id)
+    end
+    let(:excluded_account) do
+      Closeio::Pollev::Account.new(:id => 3, :plan_id => importable_plan_id)
+    end
+
+    before do
+      allow(importable_account).to receive(:sync) { lead }
+      allow(Closeio::Pollev::Account).to receive(:updated_since) do
+        [wrong_plan_account, importable_account]
+      end
+    end
+
+
+    it "gets the accounts since the passed in date" do
+      now = Time.now
+      sync = Closeio::Sync.new(now)
+      expect(Closeio::Pollev::Account).to receive(:updated_since).with(now) {[]}
+      sync.run
+    end
+
+    it "calls Account#sync for each paid account" do
+      expect(wrong_plan_account).not_to receive(:sync)
+      expect(importable_account).to receive(:sync) { lead }
+      expect(excluded_account).not_to receive(:sync)
+
+      sync = Closeio::Sync.new
+      sync.run
+    end
+
+    it "creates tasks and opportunities for each created lead" do
+      expect(lead).to receive(:create_opportunities) {[]}
+      expect(lead).to receive(:create_tasks) {[]}
+
+      sync = Closeio::Sync.new
+      sync.run
+    end
+
+    it "doesn't create tasks and opportunities for leads that were already imported" do
+      allow(lead).to receive(:z_account_id) { importable_account.id } # This line isn't strictly needed, but I'm hoping it makes the intent of the test more clear.
+      allow(importable_account).to receive(:lead) { lead }
+      allow(importable_account).to receive(:sync) { nil }
+
+      expect(lead).not_to receive(:create_opportunities) {[]}
+      expect(lead).not_to receive(:create_tasks) {[]}
+
+      sync = Closeio::Sync.new
+      sync.run
+    end
+
+    it "syncs opportunities" do
+      expect_any_instance_of(Closeio::SyncOpportunities).to receive(:run)
+      sync = Closeio::Sync.new
+      sync.run
+    end
+  end
+end

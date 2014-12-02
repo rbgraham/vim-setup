@@ -1,0 +1,61 @@
+require_relative "../closeio"
+require "json"
+
+class Closeio::Search
+  include Enumerable
+  attr_reader :api, :query, :total, :count, :data, :limit
+  attr_accessor :skip
+
+  KEY_LEAD_STATUSES = ["Plenary Plan", "Conference Plan",
+                       "Presenter Plan", "Per Instructor Plan",
+                       "Student Pays Plan", "Enterprise Customer"]
+  
+  FORMER_CUSTOMER_STATUSES = ["Former Customer"]
+
+  def initialize(api_type="lead", skip = 0, limit = 100)
+    @api = Closeio.api.new(api_type)
+    @limit = limit > 200 ? 200 : limit
+    @skip = skip
+  end
+
+  def search(query)
+    @query = query
+    response = api.get(query, @skip, @limit) 
+    hash = JSON.parse(response.body)
+    @total = hash["total_results"]
+    @count = hash["data"] ? hash["data"].count : 0
+    @more = hash["has_more"]
+    @data = hash["data"]
+  end
+
+  def each(&block)
+    @data.each(&block)
+  end
+
+  def has_more?
+    @more
+  end
+
+  def next
+    if has_more?
+      @skip = (@skip + @limit) > @total ? @skip = @total : @skip += @limit
+      search(@query)
+    end
+  end
+
+  def key_leads
+    search_by_statuses(KEY_LEAD_STATUSES)
+  end
+
+  def former_customers
+    search_by_statuses(FORMER_CUSTOMER_STATUSES)
+  end
+
+  private
+  def search_by_statuses(statuses)
+    query = statuses.map do |status|
+      "status:\"#{status}\""
+    end
+    search(query.join(" OR "))
+  end
+end

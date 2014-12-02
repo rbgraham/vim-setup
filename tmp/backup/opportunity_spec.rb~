@@ -1,0 +1,44 @@
+require_relative "../../lib/closeio/opportunity"
+
+describe "Closeio::Opportunity" do
+  subject(:opp) { Closeio::Opportunity.new({}) }
+
+  let(:account) do 
+    OpenStruct.new(:serializer => {})
+  end
+
+  describe "#update" do
+    context "account is not nil" do
+      it "updates the account" do
+        expect(opp).to receive(:lead) { double update: true}
+        expect(account).to receive(:serializer)
+        opp.update(account)
+      end
+    end
+    context "account is nil" do
+      it "skips account update" do
+        expect(opp).not_to receive(:lead)
+        expect(account).not_to receive(:serializer)
+        expect(Closeio.logger).to receive(:warn)
+        opp.update(nil)
+      end
+    end
+  end
+
+  describe "#lead" do
+    context "has lead_id" do
+      before do
+        @opp = Closeio::Opportunity.new({'lead_id' => 1})
+      end
+      it "returns the lead from Closeio" do
+        expect(Closeio::Search).to receive(:new).with("lead") { double search: [{}] }
+        expect(@opp.lead).to eql({}) 
+      end
+    end
+    context "no lead_id" do
+      it "returns nil" do
+        expect(opp.lead).to be_nil
+      end
+    end
+  end
+end

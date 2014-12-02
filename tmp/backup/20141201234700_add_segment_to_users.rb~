@@ -1,0 +1,21 @@
+require "lhm"
+
+class AddSegmentToUsers < ActiveRecord::Migration
+    OPTS = {
+          :throttle => 300,
+          :stride => 40_000
+           }
+
+   def up
+     Lhm.change_table :users, OPTS do |t|
+      t.add_column :segment, "VARCHAR(255)"
+     end
+   end
+
+   def down
+     Lhm.change_table :users, OPTS do |t|
+       t.remove_column :segment
+     end
+     Lhm.cleanup(:run)
+  end
+end

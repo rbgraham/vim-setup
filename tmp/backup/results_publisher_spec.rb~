@@ -1,0 +1,33 @@
+require 'spec_helper_fast'
+Kpi = Module.new unless defined?(Kpi)
+require app_root + "app/models/kpi/results_publisher"
+require app_root + "app/models/kpi/s3_uploader"
+require app_root + "app/models/analytic"
+require app_root + "lib/database_connection"
+
+describe Kpi::ResultsPublisher, :type => :model do
+  let(:instance){ Kpi::ResultsPublisher.new }
+
+  # stub this out
+  def DatabaseConnection.with_slave_db
+    yield
+  end
+
+  describe "publish" do
+    it "uploads results to S3" do
+      Analytic.expects(:login_to_google_analytics)
+      Kpi::ResultsPublisher::QUERY_NAMES.each do |query_name|
+        results_stub = Object.new
+        instance.expects(query_name).returns(results_stub)
+        Kpi::S3Uploader.expects(:write).with("#{query_name}.json", results_stub)
+      end
+      instance.publish
+    end
+    it "catches Garb::BackendError which are 503s from GA" do
+      Analytic.expects(:login_to_google_analytics)
+      exception = Garb::BackendError.new('BackendError', 'Error!')
+      instance.expects(:active_user_growth).raises(exception)
+      expect { instance.publish }.not_to raise_error
+    end
+  end
+end

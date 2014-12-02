@@ -1,0 +1,26 @@
+class ContactMailer < ActionMailer::Base
+  include BackgroundSender
+  default_url_options[:host] = Rails.application.config.app['host']
+
+  def sales(args)
+    @name = args[:name]
+    @email = args[:email]
+    @phone = args[:phone]
+    @message = args[:message]
+    mail(
+      :to => "sales@polleverywhere.com",
+      :from => "sales@polleverywhere.com",
+      :subject => "#{args[:source]} Sales Contact: #{args[:name]}")
+  end
+
+  def contest_entry(args)
+    @name = args[:name]
+    @email = args[:email]
+    @poll_link = args[:poll_link]
+    @blurb = args[:blurb]
+    mail(
+      :to => "contest@polleverywhere.com",
+      :from => "contest@polleverywhere.com",
+      :subject => "Contest Entry: #{args[:name]}")
+  end
+end

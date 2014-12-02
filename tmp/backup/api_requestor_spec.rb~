@@ -1,0 +1,63 @@
+require_relative "../spec_helper"
+require_relative "../../lib/closeio/api_requestor"
+
+describe Closeio::ApiRequestor do
+  subject { Closeio::ApiRequestor.new(type) }
+
+  let(:http_root_base) do
+    "https://" +
+      Closeio::ApiRequestor::AUTH[:username] +
+      ":@" +
+      Closeio::ApiRequestor::HOST +
+      Closeio::ApiRequestor::PATH
+  end
+
+  describe "working with leads" do
+    let(:type) { "lead" }
+
+    let(:http_root) do
+      "#{http_root_base}/lead/"
+    end
+
+    describe "#get" do
+      it "send the query given to Close.io" do
+        stub = stub_request(:get, "#{http_root}?_skip=0&_limit=100&query=search%20for%20this")
+        subject.get "search for this"
+        expect(stub).to have_been_requested
+      end
+    end
+
+    describe "#post" do
+      it "sends the given hash as JSON to close.io" do
+        stub = stub_request(:post, http_root).with(:body => '{"some":"hash"}')
+        subject.post({"some" => "hash"})
+        expect(stub).to have_been_requested
+      end
+    end
+
+    describe "#put" do
+      it "sends the given hash as JSON to the Lead's URI" do
+        stub = stub_request(:put, "#{http_root}lead_abc123/").with(:body => '{"some":"hash"}')
+        subject.put("lead_abc123", {"some" => "hash"})
+        expect(stub).to have_been_requested
+      end
+    end
+  end
+
+
+  describe "working with opportunities" do
+    let(:type) { "opportunity" }
+
+    let(:http_root) do
+      "#{http_root_base}/opportunity/"
+    end
+
+    describe "#post" do
+      it "sends the given hash as JSON to close.io" do
+        stub = stub_request(:post, http_root).with(:body => '{"some":"hash"}')
+        subject.post({"some" => "hash"})
+        expect(stub).to have_been_requested
+      end
+    end
+  end
+end

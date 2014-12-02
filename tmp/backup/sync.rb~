@@ -1,0 +1,33 @@
+require "time" # For Time.parse
+require "colorize" # To make console output easy to scan
+
+require_relative "../lib/closeio/sync"
+require_relative "../lib/closeio/sync_plan_changes"
+require_relative "../lib/closeio"
+require_relative "../lib/airbrake_config"
+require_relative "../lib/closeio/sync_opportunities"
+require_relative "../lib/closeio/sync_key_leads"
+
+begin
+  Closeio.logger.info "Starting import of new/updated accounts.".cyan
+  Closeio.logger.info "Env: #{ENV['RUBY_ENV']}".cyan
+  Closeio.logger.info "Making Close.io API requests with: #{Closeio.api.name}\n".cyan
+
+  # Default to 1 hour ago
+  hours_ago = 1 unless (hours_ago = ENV["HOURS_AGO"].to_i) > 0
+  one_hour = 60*60
+  time = Time.now.utc - one_hour*hours_ago
+
+  Closeio.logger.info "Looking for accounts updated since #{time}\n".magenta
+
+  sync = Closeio::Sync.new time
+  sync.run
+
+  plans_sync = Closeio::SyncPlanChanges.new time
+  plans_sync.run
+
+  Closeio.logger.info "Finished import of new/updated accounts.".green
+rescue => e
+  Airbrake.notify e, :session => ENV.to_hash if defined?(Airbrake)
+  raise
+end

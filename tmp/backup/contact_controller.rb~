@@ -1,0 +1,48 @@
+class ContactController < ApplicationController
+  before_filter :spam_proof_contact_params!, :only => [:create]
+
+  def create
+    if !spammer?
+      if params[:email].present? && params[:name].present?
+        finished("premium_features" => "contact") # Tell Split the Premium Features page completed a goal
+        ContactMailer.sales(params).deliver
+      else
+        flash[:notice] = "Name and Email are Required"
+        return redirect_back_or_default(plans_path)
+      end
+    end
+
+    flash[:notice] = "Message submitted, we'll get back soon!"
+    redirect_to root_path
+  end
+
+    def icebreaker_poll
+    if !spammer?
+      if params[ContactController::SPAM_PROOF_EMAIL_FIELD_NAME].present? && params[:poll_link].present? && params[:name].present? && params[:terms].present?
+        ContactMailer.deliver_contest_entry(params)
+      else
+        flash[:error] = "Name, email, and poll link are required, and you must agree to the terms and conditions."
+        return redirect_to icebreaker_poll_path + '#apply'
+      end
+    end
+
+    flash[:notice] = "Thanks for entering! Good luck!"
+    redirect_to icebreaker_poll_path
+  end
+
+  private
+
+  # We use the email field as a "honey pot" for spammers. The assumption is
+  # that their stupid bots fill out an email field and submit the form. The email
+  # field in production is actually hidden via CSS, so a real human won't see it.
+  # A real human will fill out only the "title" field (which looks like email).
+  SPAM_PROOF_EMAIL_FIELD_NAME = :title
+  def spam_proof_contact_params!
+    params[:spammer] = true if params[:email].present?
+    params[:email] = params.delete(SPAM_PROOF_EMAIL_FIELD_NAME)
+  end
+
+  def spammer?
+    params[:spammer]
+  end
+end

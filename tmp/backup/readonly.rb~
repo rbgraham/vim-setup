@@ -1,0 +1,59 @@
+require_relative "../../closeio"
+require_relative "../api_requestor"
+require "json"
+require "httparty"
+
+# Makes read API requests to Close.io, but fakes write requests.
+class Closeio::ApiRequestor::Readonly
+  MockResponse = Struct.new(:code, :body)
+
+  def initialize(type)
+    # TODO: Test this
+    @rw_api = Closeio::ApiRequestor.new(type)
+  end
+
+
+  # TODO: Test this
+  def get(query, skip, limit)
+    @rw_api.get(query, skip, limit)
+  end
+
+  # TODO: Test this
+  def post(body_hash)
+    write(:post, body_hash)
+  end
+
+  # TODO: Test this
+  def put(id, body_hash)
+    write(:put, body_hash, id)
+  end
+
+
+  private
+
+  def write(http_method, body_hash, id=nil)
+    log_readonly_warning(http_method, body_hash, id)
+
+    # TODO: Think about making the default lead ID random
+    body_hash["id"] ||= id || "lead_abc123"
+    MockResponse.new 200, JSON.generate(body_hash)
+  end
+
+  def log_readonly_warning(http_method, body_hash, id=nil)
+    Closeio.logger.warn "Close.io API in Read-Only mode. ".red +
+      "Destructive requests to Close.io have been disabled.\n".red +
+      [
+        "Mocking request".cyan,
+        http_method.to_s.upcase.magenta,
+        @rw_api.url(id).magenta
+      ].join(" ") + "\n" +
+      write_options(body_hash).inspect + "\n"
+
+  end
+
+  def write_options(body_hash)
+    val = @rw_api.write_options(body_hash)
+    val[:basic_auth] = "<FILTERED>"
+    val
+  end
+end

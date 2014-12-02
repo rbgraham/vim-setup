@@ -1,0 +1,212 @@
+require 'csv'
+
+# The by_subscribers method needs this helper since the query
+# returns an array of values.
+require 'will_paginate/array'
+
+class Admin::AccountsController < AdminAreaController
+  inherit_resources
+  respond_to :html, :js, :xml, :json
+
+  before_filter :resource, :only => [ :show, :usage, :edit, :suspend, :activate, :toggle_library_enabled, :update, :memberships, :check_in_or_skip, :promote_participants_to_subusers ]
+  skip_before_filter :superuser_required, :only => :toggle_library_enabled
+  before_filter :superuser_or_publisher_required, :only => :toggle_library_enabled
+
+  def show
+    respond_to do |format|
+      format.html
+      format.json { render :json => @account.as_json(:crap => true, :include => {:owner => {:include => :payment_method}}, :methods => [:to_proper_noun]) }
+    end
+  end
+
+  def paying
+    @accounts = Account.
+      where("plans.price <> 0").
+      where("payment_methods.account_id IS NOT NULL").
+      includes(:plan, :payment_method).
+      order('accounts.id DESC').
+      page(params[:page])
+    render :action => 'index'
+  end
+
+  def usage
+    @quotas = params[:quotas] && params[:quotas] == true
+    if @quotas
+      @sales_quota_responding_users =
+        SalesQuotaRespondingUsersCollector.new(@account).count
+      @participants_count = @account.participants.participants.count
+    end
+  end
+
+  def by_subscribers
+    respond_to do |wants|
+      wants.html {
+        @subscriber_leaders = Account.connection.select_rows("
+          SELECT account_id, count(subscriber_id)
+          FROM (SELECT account_id, subscriber_id, count(id)
+            FROM subscriptions
+            WHERE state='subscribed'
+            GROUP BY account_id, subscriber_id) AS account_subscribers
+          GROUP BY account_id ORDER BY count(subscriber_id) DESC; ")
+        @account_ids = @subscriber_leaders.paginate(:page => params[:page], :per_page => 10)
+      }
+      wants.csv {
+        @accounts_report = Account.connection.select_rows("
+          SELECT top_subscribers.account_id,
+            CONCAT_WS(' ', users.first_name, users.last_name) AS account_owner,
+            users.email as account_owner_email,
+            subscriber_count
+          FROM (SELECT account_id, count(subscriber_id) as subscriber_count
+            FROM (SELECT account_id, subscriber_id, count(id)
+              FROM subscriptions
+              WHERE state='subscribed'
+              GROUP BY account_id, subscriber_id) AS account_subscribers
+            GROUP BY account_id ORDER BY count(subscriber_id) DESC) as top_subscribers
+          JOIN users
+          ON top_subscribers.account_id = users.account_id
+          WHERE users.account_relationship = 2; ")
+        buffer = ""
+        header_row = ["Account ID", "Account Owner", "Account Owner Email", "List Subscribers"]
+        buffer << CSV.generate_line(header_row)
+        @accounts_report.each do |account_array|
+          buffer << CSV.generate_line(account_array)
+        end
+        render :text => buffer, :layout => false
+      }
+    end
+  end
+
+  def summary
+    render :partial => 'summary', :layout => false
+  end
+
+  # POST /admin/account/:id/library_enabled
+  def toggle_library_enabled
+    @account.toggle(:library_enabled)
+    if @account.save
+      flash[:notice] = "User's Account was successfully updated"
+    else
+      flash[:notice] = "Error: #{@account.error_messages_formatted}"
+    end
+    redirect_to :back
+  end
+
+  def check_in
+    months_in = params[:months_in].to_i
+    billing_from, billing_to = *case months_in
+    when 4
+      [7.months.from_now, 9.months.from_now]
+    when 8
+      [3.months.from_now, 5.months.from_now]
+    when 11
+      [DateTime.now, 2.months.from_now]
+    end
+
+    @accounts = if billing_from && billing_to
+      if params[:sort_by]
+        Account.where(["accounts.price > ? AND accounts.billing_cycle = ? AND (accounts.bill_at > ? AND accounts.bill_at < ?)",
+          500, "1.year", billing_from, billing_to])
+          .includes([:owner, :plan])
+          .sort_by(params[:sort_by], params[:order])
+          .page(params[:page])
+      else
+        Account.where(["accounts.price > ? AND accounts.billing_cycle = ? AND (accounts.bill_at > ? AND accounts.bill_at < ?)",
+          500, "1.year", billing_from, billing_to])
+          .includes([:owner, :plan])
+          .order('accounts.id DESC')
+          .page(params[:page])
+      end
+    else
+      flash[:notice] = "Error: Invalid months_in: #{months_in}"
+      blank_pagination
+    end
+
+    # Convert Arel object into Ruby array so delete_if works.
+    @accounts = @accounts.to_a
+
+    @accounts.delete_if do |account|
+      check_ins = BusinessEvent.where(["subject_id = ? AND predicate = 'was checked in with by' AND created_at > ?", account.id, 2.months.ago])
+      skips = BusinessEvent.where(["subject_id = ? AND predicate = 'had check in skipped by' AND created_at > ?", account.id, 2.months.ago])
+      check_ins.present? || skips.present?
+    end
+
+    render :action => 'index'
+  end
+
+  def check_in_or_skip
+    if @account
+      if params[:type] == "check-in"
+        BusinessEvent.build(@account).was_checked_in_with_by(current_user).save!
+      elsif params[:type] == "skip"
+        BusinessEvent.build(@account).had_check_in_skipped_by(current_user).save!
+      end
+    end
+    redirect_to request.referer
+  end
+
+  def promote_participants_to_subusers
+    result = @account.promote_participants_to_subusers!
+    flash[:notice] = result
+    render 'show'
+  end
+
+  private
+
+  def collection
+    @accounts ||= if params[:state]
+      end_of_association_chain.
+        where(:state => params[:state]).
+        includes(:owner, :plan).
+        order("accounts.id DESC").
+        paginate(:page => params[:page])
+    elsif params[:sort_by]
+      end_of_association_chain.
+        sort_by(params[:sort_by], params[:order]).
+        includes(:owner, :plan).
+        paginate(:page => params[:page], :total_entries => Account.approximate_count)
+    elsif params[:plan]
+      end_of_association_chain.
+        where(:plan_id => params[:plan]).
+        order("accounts.id DESC").
+        includes(:owner, :plan).
+        paginate(:page => params[:page])
+    elsif params[:billing]
+      case params[:billing]
+      when 'soon'
+        end_of_association_chain.
+          where("accounts.bill_at IS NOT NULL").
+          where(["accounts.price > ? OR accounts.sms_broadcast_price > ?", 0, 0]).
+          includes(:owner, :plan).
+          order("accounts.bill_at ASC").
+          page(params[:page])
+      when 'never'
+        end_of_association_chain.
+          where("accounts.bill_at IS NULL").
+          where(["accounts.price > ? OR accounts.sms_broadcast_price > ?", 0, 0]).
+          includes(:owner, :plan).
+          order("accounts.bill_at ASC").
+          page(params[:page])
+      else
+        raise "Billing unknown: #{params[:billing]}"
+      end
+    elsif params[:referred_by]
+      end_of_association_chain.
+        where(:referred_by_user_id => params[:referred_by]).
+        includes(:owner, :plan).
+        order("accounts.id DESC").
+        page(params[:page])
+    else
+      end_of_association_chain.
+        includes(:owner, :plan).
+        order("accounts.id DESC").
+        paginate(:page => params[:page], :total_entries => Account.approximate_count)
+    end
+  rescue Exception => e
+    flash[:notice] = "Error: #{e.message.gsub(/: SELECT.*\z/,'')}"
+    @accounts = blank_pagination
+  end
+
+  def blank_pagination
+    Account.none.page(1)
+  end
+end

@@ -1,0 +1,336 @@
+class SignupController < ApplicationController
+
+  # Different UI's we want to display for our diff flavors of user signups. If you start
+  # branching controller logic for some of this stuff I'll kill you. The point of this is
+  # that validations, etc remain the same for all the views.
+  Views = %w(progressive).freeze
+
+  ssl_required :new, :create
+
+  before_filter :find_plan, :except => :legacy_plan_route_redirect
+  before_filter :redirect_if_current_user_has_account, :except => :create_progressive
+  before_filter :redirect_unless_view_exists
+  before_filter :load_referring_user, :only => :create
+
+  # new user view. This depends on what params[:view] you pass in as to which, exactly, view
+  # it renders. (You might sign up via the progressive signup, or you might not have)
+  def new
+    @billing_cycle = @plan.billing_cycles.detect do |bc|
+      bc.duration == params[:duration]
+    end || @plan.billing_cycles.first
+
+    @user = User.new do |user|
+      user.payment_method = PaymentMethod.new if immediate_payment_required?
+      user.build_account
+      user.service_area = current_service_area
+      if @plan.plan_set.excluded_service_area
+        user.service_area = ServiceArea.get_alternate_service_area(@plan, current_country_code)
+      end
+    end
+    render :action => signup_view, :layout => 'application'
+  end
+
+  # This creates a new progressive signup user, then redirects them
+  # on their way to Poll Ev. This lets people click on the big green
+  # button on the front page to demo a poll. Its a whole lot of awesome.
+  def create_progressive
+    # Skip all of this if the user signed up and send them to the my_polls page
+    unless current_user
+      new_user = User.create! do |user|
+        user.service_area = current_service_area
+        user.build_account
+        user.build_participant
+      end
+
+      if current_participant
+        SessionMerger.new(current_participant, new_user.participant).merge
+      end
+      self.current_user = new_user
+
+      # Alias their anonymous actions with their new user ID
+      analytics_id = params.delete(:a_id) if params[:a_id]
+      unless analytics_id.nil? || analytics_id.empty?
+        Stats.alias(analytics_id, current_user.id)
+        Stats.track(analytics_id, "Progressive Signup")
+      end
+
+      # Send these folks on their way... or to the my polls path
+    end
+    redirect_to params[:url] || new_my_poll_url
+  end
+
+  def create
+    # Spammers seem to like hitting this end-point without sending properly formed
+    # request, this way we don't blow up when that happens
+    unless params[:user]
+      render :nothing => true, :status => 400
+      return
+    end
+    # We don't really accept nested attributes for accounts, but its nice to keep
+    # it consistent on the front-end.
+    if account_attributes = params[:user].delete(:account_attributes)
+      @billing_cycle = @plan.billing_cycles.where(:duration => account_attributes[:billing_cycle]).first if account_attributes.key?(:billing_cycle)
+      @billing_reminder_enabled = account_attributes[:billing_reminder_enabled].to_i == 1
+    end
+
+    if @billing_cycle.nil? and immediate_payment_required?
+    # Should not be possible but some browsers were submitting blank :account_attributes
+
+      flash[:sticky_notice] = "Your browser acted strange and did not tell us whether you were trying to sign up for monthly or annual service. Be sure one of the options is visible and selected below. If this problem continues, please call support at #{I18n.t('contacts.support.intl_phone')}"
+      redirect_back_or_default signup_path(:plan => @plan)
+      return
+    end
+    password = params[:user].delete(:password)
+    analytics_id = params[:user].delete(:a_id) if params[:user][:a_id]
+
+    @user = User.new(params[:user]) do |user|
+      # Flag is needed to prevent the triggering of a PSU validation
+      user.registered = true
+      user.last_authenticated_at = Time.now
+
+      if @plan.plan_set.excluded_service_area == user.service_area
+        user.service_area = ServiceArea.get_alternate_service_area(@plan, current_country_code)
+      end
+
+      user.account = Account.new do |account|
+        account.plan = @plan
+        account.features = @plan
+        if immediate_payment_required?
+          account.price = @billing_cycle.price
+          account.billing_cycle = @billing_cycle.duration
+        end
+        user.account_relationship = User::AccountRelationship::Owner
+        account.owner = user
+
+        # User who referred this signup
+        account.referred_by = @referring_user
+
+        account.billing_reminder_enabled = (@billing_reminder_enabled || false)
+      end
+    end
+    @user.password = password
+
+    old_user = current_user
+    old_participant = current_participant
+
+    begin
+      User.transaction do
+        # HACK: These rollback blocks are because ActiveRecord's transactions suck at restoring
+        # the primary key ID and new_record? status for new models when a transaction fails. Without
+        # these rollback blocks, for example, if a user successfully saves in the transaction but
+        # the transaction throws an exception later on, the user model will still have a non-existent
+        # primary key ID and new_record? will be false.
+        p = Proc.new{
+          @user.save! # At this point our credit card looks good, so lets save our user
+
+          # Alias the new user ID with either their PSU id (old_user) or their Mixpanel
+          if old_user && !old_user.registered?
+            Stats.alias(old_user.id, @user.id)
+            tracking_id = old_user.id
+          else
+            unless analytics_id.nil? || analytics_id.empty?
+              Stats.alias(analytics_id, @user.id)
+              tracking_id = analytics_id
+            else
+              tracking_id = @user.id
+              Stats.identify(@user)
+            end
+          end
+          # Track the event in just Mixpanel
+          Stats.track(tracking_id, "Signed up", {
+              :plan => @plan.name,
+              :price => @plan.price },
+              { :providers => { "Mixpanel" => true, "Customer.io" => false } }
+          )
+          # Track the Signup event in just customer IO
+          Stats.track(@user.id, "Signed up", {
+              :plan => @plan.name,
+              :price => @plan.price },
+            { :providers => { "Mixpanel" => false, "Customer.io" => true } }
+          )
+          finished(:signup) # Tell Split the signup metric has happened.
+          # Now lets try to charge the card. If it works, we should get an order back...
+          if immediate_payment_required?
+            if @order = @user.payment_method.charge!(@user.account.price, "#{periodical(@billing_cycle.duration).capitalize + " " if @billing_cycle}#{@plan.name} Plan - New Account", @user.account)
+              # Flash a receipt for Google Analytics if the order is successfully created
+              finished("premium_features" => "payment") # Tell Split the Premium Features page completed a goal
+              finished(:made_payment) # Tell split a payment happened.
+              flash[:notice] = %{Thank you for purchasing a #{@plan.name} Plan.}
+              flash[:receipt] = @order.id
+              flash[:purchase_plan] = @plan.name
+            end
+          end
+        }
+        if immediate_payment_required?
+          @user.payment_method.rollback_active_record_state! do
+            @user.rollback_active_record_state! do
+              p.call()
+            end
+          end
+        else
+          @user.rollback_active_record_state! do
+            p.call()
+          end
+        end
+        BusinessEvent.build(@user).signed_up_for(@plan, :worth => @order.try!(:amount) || @plan.price).save!
+      end
+
+      # Establish the users session so they don't have to login after all of
+      # this and merge the users if they're not a registered user
+      if old_participant
+        SessionMerger.new(old_participant, @user.participant).merge
+      end
+      self.current_user = @user
+
+      # Trigger Google Analytics to track a free signup.
+      if !@plan.paid?
+        flash[:free_signup] = true
+      end
+
+      # Identify them in Customer.io so that Customer.io gets data on how many polls the user
+      # has already created.
+      total_polls = @user.polls.count
+      additional_traits = { :totalPolls => total_polls, :abtestBucket => rand(10) }
+      # Track the respones received from the PSU account if it exists.
+      if old_user && old_user.account
+        additional_traits.merge!({ :totalResponses => old_user.account.results_counter })
+      end
+      Stats.identify(@user, additional_traits, { :providers => { "Mixpanel" => false, "Customer.io" => true } })
+
+      # Everything looks good! Lets send the user their signup email
+      UserMailer.signup_notification(@user).deliver
+
+      # Delete referral cookie
+      cookies.delete :referred_by
+
+      respond_to do |format|
+        format.html do
+          if immediate_payment_required?
+            redirect_to account_direct_paid_survey_path(
+              :order_id => @order.id,
+              :new_plan_id => @plan.id
+            )
+            # When we end the survey, the redirect should go here:
+            #     redirect_to order_url(@order)
+          else
+            flash[:notice] = "Thanks! Please check your email for an activation link."
+            if total_polls == 0
+              redirect_to params['redirect'] || new_my_poll_url
+            else
+              redirect_to params['redirect'] || my_polls_url
+            end
+          end
+        end
+        format.json do
+          render :json => @user.to_json
+        end
+      end
+    rescue ActiveRecord::Rollback, ActiveRecord::RecordInvalid => e
+      logger.debug e.inspect
+      respond_to do |format|
+        format.html do
+          flash[:notice] = "Drats! The stuff highlighted in red wasn't filled out correctly. Let's try that again."
+          render :action => signup_view, :layout => 'application'
+        end
+        format.json do
+          render :json => {:error => @user.error_messages_formatted}, :status => :bad_request
+        end
+      end
+    rescue PaymentMethod::ChargeRejectedException, PaymentMethod::InvalidChargeAmount => e
+      logger.debug e.inspect
+      respond_to do |format|
+        format.html do
+          @user.errors.add(:payment_method, "was declined. If this occurs multiple times, contact support at #{I18n.t('contacts.support.phone')}")
+          flash[:notice] = "Sorry! Your card could not be charged. Please check the card and try again. If it continues, please call support at #{I18n.t('contacts.support.intl_phone')}"
+          render :action => signup_view, :layout => 'application'
+        end
+        format.json do |format|
+          render :json => {:error => "Payment method declined."}, :status => :payment_required
+        end
+      end
+    rescue NoMethodError => e
+      logger.debug e.inspect
+      raise e unless @user.payment_method.nil? and immediate_payment_required?
+
+      respond_to do |format|
+        format.html do
+          @user.payment_method = PaymentMethod.new if immediate_payment_required?
+          flash[:notice] = "Payment information was invalid. Please re-enter your payment information."
+          render :action => signup_view, :layout => 'application'
+        end
+        format.json do |format|
+          render :json => {:error => "Payment information invalid."}, :status => :payment_required
+        end
+      end
+    end
+  end
+
+  private
+
+  def plan_specified?
+    !!params[:plan_id]
+  end
+
+  def find_plan
+    if plan_specified?
+      # Tell search engines/users to point to /signup if a plan can't be found. Beats a 404.
+      @plan = Plan.salable.self_serviceable.find_by_id(params[:plan_id])
+
+      if @plan.nil? || @plan.plan_set.nil?
+        redirect_to(signup_url, :status => :moved_permanently)
+        return
+      end
+    end
+
+    if !plan_specified? || @plan.plan_set.default?
+      if params[:user] && params[:user]["educator"].to_i == 1 && params[:user]["educator_plan"]
+        @plan = PlanSet.k12.free_plan if params[:user]["educator_plan"] == "k12"
+        @plan = PlanSet.higher_ed.free_plan if params[:user]["educator_plan"] == "edu"
+      end
+    end
+
+    @plan ||= Plan.default_free # If a plan_id isn't present, assume the default plan
+  end
+
+  def immediate_payment_required?
+    params.include?(:payment_method) || @plan.try!(:paid?)
+  end
+
+  def paid_participants_plan?
+    @plan.paid_participants?
+  end
+
+  def redirect_if_current_user_has_account
+    respond_to do |format|
+      format.html do
+        if current_user.try!(:registered?)
+          flash[:notice] = "You don't need to signup again since you already have an account"
+          redirect_to account_plans_path
+        end
+      end
+      format.json do
+        if current_user.try!(:registered?)
+          render :json => current_user.to_json
+        end
+      end
+    end
+  end
+
+  def redirect_unless_view_exists
+    redirect_to signup_url if params[:view].present? and not Views.include?(params[:view])
+  end
+
+  def signup_view
+    Views.find{|v| v == params[:view] } || 'new'
+  end
+
+  def load_referring_user
+    if cookies['referred_by']
+      @referring_user = User.find_by_id_token cookies['referred_by']
+    end
+  end
+
+  def user_params_required
+    !!params[:user]
+  end
+end

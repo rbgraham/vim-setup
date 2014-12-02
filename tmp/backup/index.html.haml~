@@ -1,0 +1,357 @@
+-title "Business & non-profit plans"
+-keywords "free SMS poll, Text message voting cost, free SMS voting, SMS polling, Audience Response System prices, text message polling, price, free, costs, prices"
+-description "Poll Everywhere is the cheapest Audience Response System available. Plans include free text message voting and polling."
+
+%section.light#plans#planb
+  .numeric-grid.container
+    .span-12
+      %h1 Business & non-profit plans
+      =h2 @test_string
+      %h2.subtitle Upgrade, downgrade, or cancel anytime. No hidden fees.
+
+    .duration_toggle
+      %span= link_to "Monthly", "#", :class => "show_monthly_pricing button small medium-blue"
+      %span= link_to "Annual", "#", :class => "show_annual_pricing button small gray"
+
+    .span-12.leader#short-table
+      %table.sparkle.plans
+        %thead.plan-names
+          = render :partial => "plan_name_row"
+        %tbody
+          %tr.price
+            %th
+            = render :partial => "price_row"
+          %tr.signup
+            %th
+            = render :partial => "signup_button_row", :locals => {:include_ids => true}
+
+          %tr
+            %th.right_tip(tip="Responses per poll (or \"audience size\") is the maximum number of responses a single poll can receive. Although you can create as many polls as you like, each poll cannot receive more responses than your plan's audience size allows. If your poll becomes maxed-out, you can clear it to re-use it.")
+              Responses per poll
+            = plans_table_row %w(40 50 250 700 2,500 Custom)
+
+          %tr
+            %th.right_tip(tip="Multi-user accounts allow one account holder (for example, an organization or department) to provide access to several individual users - each with their own log-in and password. Users can collaborate on creating and running polls.")
+              Multiple account users
+            = plans_table_row %w(1 1 2 4 8 Custom)
+
+          %tr
+            %th.right_tip(tip="Manually approve each message to prevent inappropriate, off-topic, duplicate, or irrelevant responses from showing up on your screens.")
+              Moderation
+            = plans_table_row false, false, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="This feature makes responding via text message much easier. With custom keywords, your audience can respond using words you choose instead of a random five digit number our robots choose.")
+              Custom keywords
+            = plans_table_row false, false, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Tell us what a right answer looks like and we'll score individual questions or grade entire quizes. Choose when to highlight the right answer on your live chart. If there's a tie, we automatically rank respondents by who answered both correctly and quickly.")
+              Grading and ranking
+            = plans_table_row false, false, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="This enables you to run team competitions on the fly. Each audience member self-identifies their team (e.g., men versus women) and you visualize their other responses by those teams. This powerful feature is also known in some industries as cross-tabbing, correlation, segmentation, or live pivot charting.")
+              Team competitions
+            = plans_table_row false, false, false, false, true, true
+
+          %tr
+            %th(tip="From 5AM to 5PM Pacific Time, our excellent college-educated support team answers the phone and responds to email fast. Email and phone support is available on selected paid plans. An excellent FAQ, full user guide, numerous video tutorials, and a community support forum are available to everyone at all times.")
+              Support
+            %td.top_tip(tip="Excellent FAQs, extensive user guide, help videos, community Q&A") Online
+            %td.top_tip(tip="Email responses in 30 minutes") Email
+            %td.highlight.top_tip(tip="Email responses in 30 minutes") Email
+            %td.top_tip(tip="Awesome phone support anytime between 5am and 5pm PST") Phone
+            %td.top_tip(tip="You will work with a dedicated account manager to make sure your needs are met.") Account Manager
+            %td.top_tip(tip="You will work with a dedicated account manager to make sure your needs are met.") Account Manager 24x7
+
+          %tr
+            %td.no-border
+            %td.no-border(colspan='6')
+              %a#short-table-link See all features which come with these plans &darr;
+
+    .span-12.leader#long-table
+      %table.sparkle.plans#sticky-header
+        %thead.plan-names
+          %tr
+            %td
+              Free
+            %td
+              Personal
+            %td.highlight
+              Presenter
+            %td
+              Plenary
+            %td
+              Conference
+            %td.platinum
+              Platinum
+        %tbody
+          %tr.price#shorter-price
+            = render :partial => "price_row"
+          %tr.signup
+            = render :partial => "signup_button_row"
+
+      %table.sparkle.plans#standard-header
+        %thead.plan-names
+          = render :partial => "plan_name_row"
+        %tbody
+          %tr.price
+            %th
+            = render :partial => "price_row"
+          %tr.signup
+            %th
+            = render :partial => "signup_button_row"
+
+      %h2
+        Usage
+      %table.sparkle.plans#usage
+        %tbody
+          %tr
+            %th.right_tip(width="175" tip="Responses per poll (or \"audience size\") is the maximum number of responses a single poll can receive. Although you can create as many polls as you like, each poll cannot receive more responses than your plan's audience size allows. If your poll becomes maxed-out, you can clear it to re-use it.")
+              Responses per poll
+              %br
+              (audience size)
+            = plans_table_row %w(40 50 250 700 2,500 Custom)
+
+          %tr
+            %th.right_tip(width="175" tip="Multi-user accounts allow one account holder (for example, an organization or department) to provide access to several individual users - each with their own log-in and password. Users can collaborate on creating and running polls.")
+              Users
+              %br
+              (concurrent presenters)
+            = plans_table_row %w(1 1 2 4 8 Custom)
+
+          %tr
+            %th.right_tip(tip="Create as many polls as you like. Each poll can be cleared and reused with a different audience. Polls can be grouped into an unlimited number of slide decks or web surveys.")
+              Unlimited polls
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="If you have a very popular poll, we just cut off the responses at your limit. We never charge you overage charges, but you can upgrade to the next plan up for a prorated price.")
+              No overage charges
+            = plans_table_row true, true, true, true, true, true
+
+      %h2
+        Design and presentation
+      %table.sparkle.plans
+        %tbody
+          %tr
+            %th.right_tip(tip="Embed live polls directly in your PowerPoint presentation on both Mac and Windows with our downloadable app. The PollEv Presenter app links to your Poll Everywhere account and allows you to add polls without leaving your presentation software.")
+              PowerPoint
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="We offer a full-screen presentation mode where you can display your instructions and the live poll results directly from the web. In full screen mode, your audience will see only your poll and not your browser buttons or tabs.")
+              Full-screen web presentations
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Several question types are available with your account including multiple choice, pick X of Y, clickable images, true/false, and free response that can be visualized as a free text wall, a ticker, or a word cloud. We have experimental Beta products for sentiment meters (\"Dial Testing\") and voting on peer-submitted ideas (\"Discourses\")")
+              Many question types
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="You can display the results of a free text poll as a live word cloud that updates automatically as responses come in. ")
+              Live word clouds
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="You can display responses to a free text poll as a live text wall that shows responses chronologically. You decide whether messages are anonymous or show who they are from (with the permission of the sender)")
+              Text walls
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Survey view allows people on web devices to answer many questions on a single page at their own pace, similar to web survey tools.")
+              Survey view
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="You can customize the colors, fonts, and graphics for your poll, or use one of our pre-made themes. ")
+              Customize look & styles
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Set a default visual style and settings template that all new polls will follow. Use one poll and \"paint\" its settings onto other polls with the \"Edit Multiple\" feature.")
+              Templates and format painter
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="In multiple choice polls, you can upload or link to images as the answer choices rather than text.")
+              Images as choices
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Our free service shows a small Poll Everywhere logo on your polls. All paid plans allow you to customize your own branding on the live display.")
+              No Poll Everywhere branding
+            = plans_table_row false, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Manually approve each message to prevent inappropriate, off-topic, duplicate, or irrelevant responses from showing up on your screens. ")
+              Moderation
+            = plans_table_row false, false, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="If you want, Poll Everywhere can automatically prevent common profanities from appearing on screen, or you can choose to replace it with a**terisks. ")
+              Automatic censoring
+            = plans_table_row false, false, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="When using a multiple choice poll, you can designate one or more the choices as the correct one. Once you do, you can view a grading or ranking report to understand your participants' performance. You can also opt to highlight the correct answer live on your poll.")
+              Correct answer display
+            = plans_table_row false, false, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="This enables you to run team competitions on the fly. Each audience member self-identifies their team (e.g., men versus women) and you visualize their other responses by those teams. This powerful feature is also known in some industries as cross-tabbing, correlation, segmentation, or live pivot charting.")
+              Team competitions
+              %br
+              and live pivots
+            = plans_table_row false, false, false, false, true, true
+
+      %h2 Response features
+
+      %table.sparkle.plans
+        %tbody
+          %tr
+            %th.right_tip(tip="Your audience can use any device: smartphones, dumbphones, tablets, and laptops. You control how responses can be submitted: text messages, tweets, or an elegant web interface which responds like a mobile app.")
+              Any mobile device:
+              %br
+              text, web, Twitter, app
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Presenters can use our Mobile Presenter tools to manage polls and create new polls on the fly.")
+              Smartphone control for presenters
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Set your custom polling page's web address: PollEv.com/Your_Name. If you're having an audience use web devices, they will visit this page to respond to your polls. If using PowerPoint, this page automatically follows along with your presentation.")
+              Custom polling link:
+              %br
+              PollEv.com/Your_Name
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Audiences in any country can vote via the web or Twitter. In most countries we also accommodate text message voting.")
+              Global coverage
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Phone numbers or email addresses are never shared, and people are never sent unsolicited messages. Audience members are anonymous unless they give you permission to know their name or email address.")
+              Private & spam-free
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="You specify the number of times each audience member can respond to any question (even if responses are set to be anonymous); or, set it to be unlimited.")
+              Restrict votes per person
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Use our HTML snippets to embed live response displays in any blog or web page. Optionally use our voting widget to allow people to vote by clicking right on your web page. You can style it to look perfect with your own inline CSS.")
+              Embeddable voting widget
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="This allows you to control exactly who can respond to polls. You can optionally require participants to register their name and email address before voting.")
+              Restrict polls to a participant list
+            = plans_table_row false, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="This allows you (with their permission) to see who said what. This can optionally be used to track their participation on an ongoing basis for attendance, grading, or longitudinal study.")
+              Identify participants
+            = plans_table_row false, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Organize your registered participants into groups for easier managment of multiple classes or groups.")
+              Participant import and grouping
+            = plans_table_row false, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Mark a poll as anonymous and responses will never be identifiable, even if that audience member gives the presenter permission to know their name or email address in the future.")
+              Strict anonymous mode
+            = plans_table_row false, false, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="This feature makes responding via text message much easier. With custom keywords, your audience can respond using words you choose instead of a random five digit number our robots choose.")
+              Custom keywords
+            = plans_table_row false, false, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="After your audience responds to your poll, you can send them a custom text message acknowledging their participation.")
+              Custom reply message
+            = plans_table_row false, false, false, true, true, true
+
+      %h2
+        Reporting features
+      %table.sparkle.plans
+        %tbody
+          %tr
+            %th.right_tip(width="175" tip="An individual list of responses is available for download as a .CSV file which works in all spreadsheet apps like Excel.")
+              Downloadable poll data
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Quickly grab a .JPG image of your chart's current responses for use in executive summaries or simply to capture an epic victor forever.")
+              Chart Screenshots
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Share private links to polls or post live charts on Facebook, Twitter, or any other web page you can edit.")
+              Online publication
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Whenever you clear a poll we archive the existing responses into a historical run, just like archiving in Gmail. Upgraded accounts can go back in time and browse past runs. Deleting a poll deletes all past runs permanently.")
+              Archived results
+            = plans_table_row false, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Select which questions you'd like to summarize to view a high level report of responses. Numeric responses can have statistics computed such as counts, averges, and standard deviations. You can export any report as a spreadsheet or print it as a PDF.")
+              Summary reports
+            = plans_table_row false, false, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Tell us what a right answer looks like and we'll score individual questions or grade entire quizes. If there's a tie, we automatically rank respondents by who answered both correctly and quickly.")
+              Grading and ranking
+            = plans_table_row false, false, true, true, true, true
+
+      %h2
+        World class support
+      %table.sparkle.plans#support
+        %tbody
+          %tr
+            %th
+              Support hours
+            %td
+              As possible
+            %td(colspan=4)
+              12 hours daily: 5am to 5pm PST
+            %td.top_tip(tip="You will work with a dedicated account manager to make sure your needs are met.") Account Manager
+          %tr
+            %th
+              Excellent FAQs,
+              %br
+              Extensive user guide,
+              %br
+              Help videos,
+              %br
+              Community Q&A
+            = plans_table_row true, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="On average, we response to paid customers' emails within 30 minutes during business hours.")
+              Email responses in 30 minutes
+            = plans_table_row false, true, true, true, true, true
+
+          %tr
+            %th.right_tip(tip="Our US-based college-educated support team answers 95% of phone calls during business hours without signifiant hold times or going to voicemail.")
+              Phone Support
+            = plans_table_row false, false, true, true, true, true
+
+%section#questions.baby-blue
+  .numeric-grid.container
+    .span-6
+      %h2 Planning a one time event?
+      %p No worries, just downgrade back to the Free when you're done. We don't offer one-time or per-event plans for a lot of boring reasons: you'll need access to premium features before the event for practice and it costs the same for us to provide a month of service as a single day of service. So enjoy the month of service and don't forget to downgrade!
+    .span-6.last
+      %h2 Have more questions?
+      %p Everything is covered in our #{link_to 'Frequently Asked Questions', 'faq'} and our #{link_to 'User Guide', 'guide'}.

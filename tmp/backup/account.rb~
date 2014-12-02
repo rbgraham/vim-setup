@@ -1,0 +1,801 @@
+require Rails.root.join('lib/acts_as_infinite')
+require Rails.root.join('app/helpers/application_helper')
+
+# Exception classes
+PaymentMethodRequired = Class.new(StandardError)
+
+class Account < ActiveRecord::Base
+  include ApplicationMethods
+  include AASM
+  extend HasParsableDurationString
+
+  RUNNING_LOW_ON_USERS_THRESHOLD = 0.2
+  SMALL_ACCOUNT_USER_LIMIT = 10
+  LOWEST_PRICE_FOR_ANNUAL_REMINDER = 40
+  FEATURES = %w[
+    maximum_votes_per_poll
+    maximum_users
+    custom_keywords
+    reports
+    custom_confirmations
+    web_branded
+    participant_reporting
+    moderation
+    grading
+    sms_confirmations
+    sms_broadcasting
+    premium_keyword_reservations
+    full_phone_number_reporting
+    participant_price
+    comparison_reporting]
+
+  attr_protected :owner_id
+
+  acts_as_infinite :maximum_votes_per_poll, :maximum_users
+
+  has_many :orders, :through => :registered_users
+  has_many :polls, :dependent => :destroy
+  has_many :lists, :dependent => :destroy
+  has_many :notes, :as => :noteable, :dependent => :destroy
+  has_many :subscriptions, :dependent => :destroy
+  has_many :subscribers, :through => :subscriptions, :class_name => 'Participant'
+  has_many :invitations, :dependent => :destroy
+  has_many :business_events, :as => :subject
+  has_many :user_groups, :dependent => :destroy
+  has_many :memberships, ->{ includes(:user) }, :dependent => :destroy do
+    def count_except_default
+      # Had to tune for performance. ORM was too dumb.
+      connection.select_value("select count(*) from memberships m where m.user_id <> #{@association.owner.owner.id} and m.account_id = #{@association.owner.id}").to_i
+    end
+
+    def count_non_subusers
+      @association.owner.memberships.length - @association.owner.registered_users.length
+    end
+
+    def purge_participants
+      Membership.where(:account_id => @association.owner.id).
+        where("user_id NOT IN (?)", @association.owner.registered_users.map(&:id)).
+        delete_all
+    end
+  end
+  has_one  :owner, ->{ where(["account_relationship = 2"]) }, :class_name => 'User'
+  has_many :admins, ->{ where(["account_relationship >= 1"]) }, :class_name => 'User'
+  has_many :registered_users, ->{ where(["account_relationship >= 0"]) }, :class_name => 'User' do
+    def in_my_view(current_user)
+      if @association.owner.maximum_users > SMALL_ACCOUNT_USER_LIMIT
+        if current_user.user_group_id.blank?
+          where(:id => current_user.id)
+        else
+          where(:user_group_id => current_user.user_group_id)
+        end
+      else
+        all
+      end
+    end
+  end
+  has_many :only_registered_users, ->{ where(["account_relationship = 0"]) }, :class_name => 'User'
+  has_many :only_registered_users_and_admins, ->{ where(["account_relationship <= 1"]) }, :class_name => "User"
+
+  belongs_to  :referred_by, :class_name => 'User', :foreign_key => "referred_by_user_id"
+
+  before_destroy :move_registered_users_to_new_account
+
+  belongs_to :downgrade_plan, :class_name => 'Plan'
+  belongs_to :plan
+
+  before_destroy :move_registered_users_to_default_accounts
+
+  default_value_for :plan do |account|
+    # default_value_for overwrites values that are set in a block on initialization.
+    account.plan || Plan.default
+  end
+
+  # This returns User objects. Stooooopid.
+  has_many :participants, :through => :memberships, :source => :user
+
+  has_many :blackboard_connections, :dependent => :destroy, :class_name => "Lms::Blackboard::Connection"
+
+  validates_duration_of :billing_cycle, :allow_blank => true
+  validates_presence_of :billing_cycle, :if => :requires_payment?
+  validates_presence_of :bill_at, :if => :requires_payment?
+  validates_presence_of :plan, :maximum_votes_per_poll
+  validates_numericality_of :price, :greater_than_or_equal_to => 0
+
+  validates_each :maximum_users, :maximum_votes_per_poll do |record, attr_name, val|
+    record.errors.add(attr_name, "must be greater than 0") if val == 0
+  end
+  # Use these two bits to force an agreement on the user. This is used for upgrades or downgrades
+  validates_acceptance_of :agreement, :if => Proc.new{ |a| a.require_agreement }
+  attr_accessor :require_agreement
+
+  before_validation :initialize_bill_at_date, :if => Proc.new{ |a| a.requires_payment? }
+
+  # acts_as_state_machine reimplmeneted with AASM
+  aasm :column => 'state' do
+    state :active, :initial => true # Our account is all hunky-dory! Everything is ok and paid
+    state :requires_payment_method # We tried to charge the account for a paid plan, but they didn't have a payment method. Not good!
+    state :failed_payment_method # For some reason the charge didn't go through! Could be a bad credit card number, but at least we hit BT!
+    state :suspended # The account was suspended for some reason or another; this isn't good for the user and they shouldn't be able to login!
+    state :inactive
+
+    event :requires_payment_method do
+      transitions :from => :active, :to => :requires_payment_method
+    end
+
+    event :use_account do
+      transitions :from => :inactive, :to => :active
+    end
+
+    event :activate do
+      transitions :from => :requires_payment_method, :to => :active
+      transitions :from => :failed_payment_method, :to => :active
+      transitions :from => :suspended, :to => :active
+      transitions :from => :inactive, :to => :active
+      transitions :from => :active, :to => :active
+    end
+
+    event :fail_payment_method do
+      transitions :from => :requires_payment_method, :to => :failed_payment_method
+      transitions :from => :active, :to => :failed_payment_method
+      transitions :from => :failed_payment_method, :to => :failed_payment_method
+      # TODO: Figure out why we have this transition and add a comment explaining it.
+      transitions :from => :inactive, :to => :active
+    end
+
+    event :suspend do
+      transitions :from => :active, :to => :suspended
+      transitions :from => :failed_payment_method, :to => :suspended
+      transitions :from => :requires_payment_method, :to => :suspended
+      # TODO: Figure out why we have this transition and add a comment explaining it.
+      transitions :from => :inactive, :to => :active
+    end
+
+    event :inactivate do
+      transitions :from => :active, :to => :inactive
+      transitions :from => :failed_payment_method, :to => :inactive
+      transitions :from => :suspended, :to => :suspended
+      transitions :from => :requires_payment_method, :to => :inactive
+      transitions :from => :inactive, :to => :inactive
+    end
+  end
+
+  def self.sort_by(field, order)
+    self.order("#{sanitize_sql(field)} #{sanitize_sql(order) == 'DESC' ? 'DESC' : 'ASC'}")
+  end
+
+  def self.billable
+    where(["bill_at < ? AND (downgrade_plan_id IS NOT NULL OR price > 0.00 OR sms_broadcast_price > 0.00 )",
+      Time.now])
+  end
+
+  def self.need_billing_reminders
+    bill_at_range = bill_at_reminder_range(2)
+    select("accounts.*").
+      joins("LEFT JOIN plans p ON accounts.downgrade_plan_id = p.id LEFT JOIN billing_cycles b ON b.plan_id = p.id").
+      where([
+        "billing_reminder_enabled = ? AND bill_at BETWEEN ? AND ? AND (accounts.billing_cycle IS NULL OR accounts.billing_cycle <> ?) AND (b.price IS NOT NULL OR accounts.price > 0.00 OR accounts.sms_broadcast_price > 0.00)",
+        true,
+        bill_at_range.begin.utc,
+        bill_at_range.end.utc,
+        # excluding 1.year billing_cycle because it's already covered in need_annual_billing_reminders
+        "1.year"
+    ])
+  end
+
+  def self.need_annual_billing_reminders
+    bill_at_range_2 = bill_at_reminder_range(2)
+    bill_at_range_30 = bill_at_reminder_range(30)
+    where([
+        "accounts.price > ? AND accounts.billing_cycle = ? AND ((accounts.bill_at BETWEEN ? AND ?) OR (accounts.bill_at BETWEEN ? AND ?))",
+        LOWEST_PRICE_FOR_ANNUAL_REMINDER,
+        "1.year",
+        bill_at_range_2.begin.utc,
+        bill_at_range_2.end.utc,
+        bill_at_range_30.begin.utc,
+        bill_at_range_30.end.utc
+    ])
+  end
+
+  def self.discrepant
+    joins(:plan).where([
+      "plans.id IN (SELECT DISTINCT plan_id FROM billing_cycles WHERE price > 0) AND ((accounts.price = 0) OR (accounts.bill_at < ? AND accounts.price > 0))",
+      Time.now - 31.days
+    ])
+  end
+
+  def self.past_grace_period
+    where(["bill_at < ?", Date.today - 7.days])
+  end
+
+  def self.transition_active_inactive_accounts
+    Account.where(:state => "active").
+      where("id IN (SELECT DISTINCT u.account_id FROM users u WHERE u.account_id = accounts.id AND u.crypted_password IS NULL AND u.updated_at < ? AND accounts.price <= 0)", 2.weeks.ago).
+      update_all(:state => "inactive")
+
+    Account.where(:state => "inactive").
+      where("id in (SELECT DISTINCT u.account_id FROM users u WHERE u.account_id = accounts.id AND u.updated_at >= ?) != 0", 2.weeks.ago).
+      update_all(:state => "active")
+  end
+
+  # Bills all of the accounts that are due. This is most likely going to always be run by a
+  # rake task on a daily basis
+  def self.bill_active_accounts!
+    Rails.logger.info "Billing active accounts..."
+    account_billing_statuses = Account.billable.active.inject({}) do |billing_statuses, account|
+      Rails.logger.info " Billing account #{account.id}"
+      begin
+        account.bill!
+      rescue PaymentMethod::ChargeRejectedException => e
+        AccountMailer.payment_declined(account).deliver
+        Rails.logger.info "    Emailed owner of account to update payment method\n    Error: #{e.message}"
+        e.message << "\n    (Account owner emailed)"
+        status = e.message
+      rescue => e
+        Rails.logger.info "    Other Error: #{e.message}\n    (Account owner not emailed)"
+        e.message << "\n    (Account owner not emailed)"
+        status = e.message
+      end
+      billing_statuses.merge(account => status)
+    end
+    Rails.logger.info "Active accounts have been billed."
+    Rails.logger.info "Checking for account discrepancies..."
+    account_discrepancies = Account.discrepant.active
+    AdminMailer.billing_summary_notification(account_billing_statuses, account_discrepancies).deliver
+    true
+  end
+
+  def self.send_annual_billing_reminders
+    Rails.logger.info "Sending billing reminders for annual annual accounts due to be billed 2 or 30 days from now..."
+    Account.active.need_annual_billing_reminders.each(&:send_annual_billing_reminder)
+  end
+
+  def send_annual_billing_reminder
+    Rails.logger.info "Sending annual billing reminder email: #{to_s}"
+    AccountMailer.annual_billing_reminder(self).deliver
+  rescue => e
+    Airbrake.notify(e, :parameters => { :account_id => id })
+  end
+
+  def to_s
+    "<#{self.class.name} #{id} | #{state}>"
+  end
+
+  def self.send_billing_reminders
+    Rails.logger.info "Sending billing reminders for accounts due to be billed 2 days from now..."
+    Account.active.need_billing_reminders.each do |account|
+      Rails.logger.info " Sending billing reminder email for account #{account.id}"
+      AccountMailer.billing_reminder(account).deliver
+      account.update_attribute(:billing_reminder_enabled, false)
+    end
+  end
+
+  def self.auto_downgrade_failed_payment!
+    Rails.logger.info "Attempting to downgrade all accounts that have been in failed_payment_method status for a week."
+    account_rebill_statuses = Account.billable.failed_payment_method.past_grace_period.inject({}) do |account_rebill_statuses, account|
+      Rails.logger.info " Billing account #{account.id}"
+      begin
+        account.activate! if account.bill!
+        status = "    Sucessfully re-billed\n"
+      rescue => e
+        status = "    Could not re-bill: #{e.message}\n"
+        begin
+          account.activate! if account.downgrade!(account.free_plan_in_current_plan_set)
+          status << "    Auto-downgraded suceeded\n"
+        rescue => e2
+          status << "    Auto-downgrade failed: #{e2.message}\n"
+        end
+      end
+      Rails.logger.info status
+      account_rebill_statuses.merge(account => status)
+    end
+    AdminMailer.auto_downgrade_failed_payment_notification(account_rebill_statuses).deliver
+    true
+  end
+
+  def touch!
+    use_account!
+    Account.where(:id => id).update_all(:updated_at => Time.zone.now)
+  end
+
+  def to_proper_noun
+    if owner
+      "#{owner.to_proper_noun.possessive} Account"
+    else
+      "Orphaned Account"
+    end
+  end
+
+  def pretty_name
+    organization.presence || to_proper_noun
+  end
+
+  # This is a quick and dirty way to figure out of the person is on an enterprise account. We might replace
+  # this with a database attribute or some otherway to designate accounts as enterprise.
+  def enterprise?
+    maximum_users > 10
+  end
+
+  # Assigns a plans feature to an account when a plan assignment is made.
+  def plan_with_account_configuration=(plan)
+    # This if is here in case a nil is passed through, which we want to
+    # nulify the plan and not reconfigure all of the plan features.
+    if plan
+      FEATURES.each do |feature|
+        self.send("#{feature}=", plan.send(feature)) if plan.respond_to?(feature)
+      end
+    end
+    self.plan_without_account_configuration = plan
+  end
+  alias_method_chain :plan=, :account_configuration
+
+  def free_plan_in_current_plan_set
+    plan.plan_set.try!(:free_plan) || Plan.free
+  end
+
+  delegate :id, :name, :first_name, :email, :payment_method, :superuser?,
+    :to => :owner, :prefix => true, :allow_nil => true
+
+  def bill!
+    # Check to see what downgrade_plan is set to
+    downgrade!(downgrade_plan) if downgrade_plan
+
+    # Now bill the damn account!
+    if requires_payment?
+      if owner_payment_method.present?
+        # 2. Bill it
+        begin
+          # Try to charge the account; if something bad happens it wil be caught as an exception
+          if owner_payment_method.charge!(price_with_non_plan_features, billing_description, self)
+            # Now reset the billing cycle
+            self.bill_at = bill_at_next
+            # Recharge their text blaster batery pack
+            self.broadcast_messages_remaining = broadcast_messages_allowed
+            save!
+          else
+            # Fail the payment if the payment method doesn't get charged
+            Rails.logger.info "  \e[31m\e[4mFAILED PAYMENT METHOD:\e[0m Account ID: #{self.id}"
+            fail_payment_method!
+          end
+        rescue => e
+          # Fail the payment if the payment method doesn't get charged
+          Rails.logger.info "  \e[31m\e[4mFAILED PAYMENT METHOD:\e[0m Account ID: #{self.id}"
+          fail_payment_method!
+          raise e
+        end
+      else
+        # Oh, what's that? No Credit Card?
+        Rails.logger.info "  \e[31m\e[4mREQUIRE PAYMENT METHOD:\e[0m Account ID: #{self.id}"
+        requires_payment_method!
+      end
+    else
+      # Bill_at date was set to today, but doesn't require payment (price probably set in admin to $0)
+    end
+  end
+
+  def billing_description
+    "#{self.plan.name} Plan#{" w/ Broadcast Lists" if self.broadcasting?}"
+  end
+
+  def price_with_non_plan_features
+    price = self.price
+    price += (self.sms_broadcast_price.nil? ? 0.0 : self.sms_broadcast_price)
+    price
+  end
+
+  # Calculated the prorated monthly_price of the plan based on the number of days into the plans billing cycle
+  # for the given account...
+  def prorated_price(new_price)
+    #raise ArgumentError.new("New price must not be less than current price") if new_price < self.price
+
+    # What percentage of time has elapsed from the current cycle
+    # Tack that credit on top of the new price and you've got what we need!
+    prorated_price = new_price - remaining_balance
+
+    if prorated_price > self.price + new_price
+      prorated_price
+    elsif prorated_price < 0.0
+      0.0
+    else
+      prorated_price
+    end
+  end
+
+  def remaining_balance
+    # No figure out, in dollars, how much of the account has not been used so we can credit the proration
+    prorated_credit = remaining_billing_cycle_percentage * self.price
+  end
+
+  def remaining_billing_cycle_percentage
+    return 1.0 if bill_at.blank?
+    billing_cycle_length = parsed_billing_cycle_was || parsed_billing_cycle
+    # if no billing cycle is specified, assume no account balance remaining
+    return 0.0 if billing_cycle_length.nil?
+    time_until_bill_at = bill_at - Time.now
+    time_until_bill_at / billing_cycle_length
+  end
+
+  def bill_at_next(options={})
+    if parsed_billing_cycle
+      start_time = options[:from] || self.bill_at || Time.now
+      start_time + parsed_billing_cycle
+    else
+      # If the billing_cycle is blank or not valid, then just return now.
+      # This is OK because if the account actually requires payment, then there
+      # are separate validation checks to ensure that billing_cycle is set
+      # properly.
+      Time.now
+    end
+  end
+
+  def parsed_billing_cycle
+    self.class.parsed_duration_string(billing_cycle)
+  end
+
+  def parsed_billing_cycle_was
+    self.class.parsed_duration_string(billing_cycle_was)
+  end
+
+  # Converts bill_at to the time we actually plan on running the billing cron job.
+  # Essentially this is a ceiling function. It returns the earliest billing time
+  # that is greater than `Account#bill_at`.
+  def bill_at_for_reminders
+    return nil unless bill_at
+
+    tmp = bill_at.utc - PollEverywhere::Schedule::CHARGE_DAILY_AT
+    # Must do #to_i on `1.day` or Rails starts messing with the time zone.
+    Time.new(tmp.year, tmp.month, tmp.day, 0, 0, 0, 0) + 1.day.to_i +
+      PollEverywhere::Schedule::CHARGE_DAILY_AT
+  end
+
+  # Downgrades the account from a higher to a lower plan
+  def downgrade!(new_plan, billing_cycle=nil)
+    raise ArgumentError.new("Plan or features required to downgrade a plan") if new_plan.nil?
+    raise PaymentMethodRequired.new("Credit card required to downgrade a plan") if (new_plan.requires_payment? && owner_payment_method.nil?)
+    raise ArgumentError.new("Account has too many users for the downgraded plan. Remove #{self.total_account_users - new_plan.maximum_users} user(s) or invitation(s) before downgrading to this plan.") if new_plan.maximum_users < self.total_account_users
+
+    change_plan!(new_plan, :billing_cycle => billing_cycle) do |account|
+      account.downgrade_plan = nil
+    end
+  end
+
+  def change_plan(new_plan, options = {})
+    return false unless valid?
+
+    new_price = 0.0
+    new_duration = nil
+    new_billing_cycle = options[:billing_cycle] || new_plan.billing_cycles.find_by_duration(billing_cycle)
+
+    Account.transaction do
+      if new_plan.requires_payment?
+        if new_billing_cycle
+          new_price = new_billing_cycle.price
+          new_duration = new_billing_cycle.duration
+          prorated_price = prorated_price(new_price)
+
+          if new_plan.maximum_users < total_account_users
+            errors.add(:base, "Account has too many users for the new plan. Remove #{total_account_users - new_plan.maximum_users} user(s) or invitation(s) before changing to this plan.")
+          elsif prorated_price
+            description = "Plan change from "
+            description << periodical(billing_cycle) << " " if billing_cycle
+            description << plan.name
+            description << " Plan to "
+            description << periodical(new_duration) << " " if new_duration
+            description << new_plan.name
+            description << " Plan"
+
+            self.billing_cycle = new_duration
+            self.bill_at = parsed_billing_cycle.from_now if billing_cycle
+
+            charge(description, prorated_price) || errors.add(:base, "Could not charge payment method.")
+          end
+        else
+          errors.add(:billing_cycle, 'not selected')
+        end
+      end
+
+      change_polls_to_fit_plan_features(new_plan)
+
+      if new_plan.maximum_users < total_account_users
+        errors.add(:base, "Account has too many users for the new plan. Remove #{total_account_users - new_plan.maximum_users} user(s) or invitation(s) before changing to this plan.")
+      end
+
+      if errors.blank?
+        yield self if block_given?
+
+        # Change all users' service areas if the new plan set happens to have an excluded service area
+        if alternate_service_area = ServiceArea.get_alternate_service_area(new_plan, options[:country_code])
+          User.where(:account_id => self.id).
+            update_all(:service_area_id => alternate_service_area.id)
+        end
+
+        self.plan = new_plan
+        self.downgrade_plan = nil
+        # self.billing_cycle = new_duration
+        # self.bill_at = parsed_duration_string(billing_cycle).from_now if billing_cycle
+        self.price = new_price
+        activate!
+        save
+      end
+      raise ActiveRecord::Rollback unless errors.blank?
+    end
+    errors.blank?
+  end
+
+  def payment_method_expiring?
+    owner_payment_method.present? &&
+      owner_payment_method.expiration_date < bill_at
+  end
+
+  def change_plan!(new_plan, options = {}, &blk)
+    change_plan(new_plan, options, &blk) or raise ActiveRecord::RecordInvalid.new(self)
+  end
+
+  def bill_sms_broadcast
+    self.charge("Text2Broadcast Subscription", self.sms_broadcast_price) if self.sms_broadcast_price > 0.00
+    self.broadcast_messages_remaining = self.broadcast_messages_allowed
+  end
+
+  def charge(description, price)
+    # Determine if we're taking candy from the baby
+    return true unless price > 0
+
+    # Get the cash and run
+    if owner_payment_method.nil?
+      self.errors.add(:payment_method, "is required")
+      false
+    elsif !owner_payment_method.valid?
+      self.errors.add(:base, "Credit card could not be charged. Please check the number and expiration date and try again.")
+      false
+    # Looks like this guy's CC is made out of plastic. Let's see if he's got
+    # some coin in his pocket though shall we?
+    elsif !owner_payment_method.charge(price, description, self)
+      self.errors.add(:base, "Credit card could not be charged. Check the number and expiration date and try again.")
+      false
+    else
+      true
+    end
+  end
+
+  def requires_paid_participation?
+    self.participant_price > 0.0
+  end
+
+  def has_unpaid_participants?
+    self.participants.unpaid(self.participant_price).count > 0
+  end
+
+  def free?
+    price.zero?
+  end
+
+  def paid?
+    not free?
+  end
+
+  def acts_as_big_account?
+    maximum_users > SMALL_ACCOUNT_USER_LIMIT
+  end
+
+  # Admins, those with the special feature, and MobileCause users
+  def full_phone_number_reporting?
+    self.full_phone_number_reporting || owner_superuser?
+  end
+
+  # Total number of "users" on this account (includes invitations)
+  def total_account_users
+    self.registered_users.count + self.invitations.count
+  end
+
+  # Number of more users that can be added to this account
+  def remaining_registered_users
+    self.maximum_users - self.total_account_users
+  end
+
+  def running_low_on_users?(threshold=RUNNING_LOW_ON_USERS_THRESHOLD)
+    if self.remaining_registered_users <= 0
+      true
+    elsif threshold >= (self.remaining_registered_users.to_f / self.maximum_users.to_f)
+      true
+    else
+      false
+    end
+  end
+
+  # Only used for our Free Trial Survey (May 2014). Remove this when the free
+  # trial survey is done.
+  # Having this method makes the controller simpler.
+  def free_trial_multiple_users=(new_val)
+    self.maximum_users = 8 if new_val
+  end
+
+  # Returns a hash of features and their status on the account
+  def features
+    @features ||= FEATURES.inject({}) do |hash, feature|
+      hash[feature] = read_attribute(feature)
+      hash
+    end
+  end
+
+  # Returns whether the account is able to send broadcast messages
+  def broadcasting
+    self.sms_broadcasting?
+  end
+  alias_method 'broadcasting?', :broadcasting
+
+  def multiuser
+    maximum_users > 1
+  end
+  alias_method 'multiuser?', :multiuser
+
+  # This is used for the account sweeper so that it can expire the poll
+  # cache if any of the features we changed
+  def features_changed?
+    FEATURES.any? do |feature|
+      self.send("#{feature}_changed?")
+    end
+  end
+
+  # Set the features and their statuses on an account
+  def features=(features)
+    features = features.attributes if features.respond_to?(:attributes)
+    features.stringify_keys!
+
+    FEATURES.each do |feature|
+      self.send("#{feature}=", features[feature])
+    end
+  end
+
+  def requires_payment?
+    (price and price > 0) or (sms_broadcast_price and sms_broadcast_price > 0) or (plan and plan.requires_payment?)
+  end
+
+  def to_xml(opts={})
+    super(opts.merge({ :methods => [:owner_id] }))
+  end
+
+  def deduct_broadcast!
+    Account.increment_counter(:mt_counter, self.id)
+    Account.decrement_counter(:broadcast_messages_remaining, self.id)
+  end
+
+  # Name conflict - would prefer "custom_keywords" but that's the permission.
+  def premium_keywords
+    Keyword.custom.on_account(id)
+  end
+
+  # This is the new proper way, replacing old custom SQL in result
+  #   (Replacing this: Account.connection.execute "results_counter = IFNULL(results_counter, 0) + 1#{" , mt_counter = IFNULL(mt_counter,0) + 1" if self.confirmation_message and poll.owner.account.sms_confirmations? and self.try!(:source).try!(:sms_source?)}", ["id = ?", poll.owner.account.id])
+  # Note it's avoiding increment!, increment + save(false), and update_attribute.
+  # Rails will do bad things to us with those, IE a bunch of junk reloading SQL, setting updated_at, etc.
+  def increment_counters!(opts={})
+    opts[:mt_sent] = false unless opts.has_key?(:mt_sent)
+    Account.increment_counter(:results_counter, id)
+    Account.increment_counter(:mt_counter, id) if opts[:mt_sent]
+
+    # Fake out for consistent state without reload nonsense. On the downside, Rails thinks it's dirty when it's not.
+    self.results_counter += 1
+    self.mt_counter += 1 if opts[:mt_sent]
+  end
+
+  # NOTE: This is different from Account#results_counter.
+  #       This method counts the number of results that are actually in the db.
+  #       This method includes archived results.
+  #       (Account#results_counter is a counter cached integer column.
+  #       See Account#increment_counters! for details on that.)
+  def result_count(options={})
+    conditions = ['polls.account_id = ?', self.id]
+    if (older_than = options[:older_than].to_i) && older_than > 0 && older_than < 100000
+      conditions[0] += ' AND results.created_at <= ?'
+      conditions << older_than.days.ago.utc
+    end
+    Result.joins(:poll).where(conditions).count(:all)
+  end
+
+  def sales_quota_responding_users(days=31)
+    count_devices = %[
+      SELECT COUNT(tmp.count)/1.5 FROM (
+        SELECT COUNT(*) AS count
+          FROM accounts a
+          JOIN polls p ON p.account_id = a.id
+          JOIN results r ON r.poll_id = p.id
+          JOIN participants s ON r.voter_id = s.id
+          AND a.id = #{id}
+          AND r.created_at > DATE_SUB(NOW(), INTERVAL #{days} DAY)
+          GROUP BY r.voter_id HAVING count(r.id) > 0
+          LIMIT 5000
+      ) AS tmp;
+    ]
+    Account.connection.select_values(count_devices).first.to_i
+  end
+
+  def participant_imports
+    ParticipantImport.by_account(self.id)
+  end
+
+  # Take enterprise accounts where participants are created via interface, and convert them all to subusers
+  def promote_participants_to_subusers!
+    successes = 0
+    non_subusers_count = participants.participants.count
+    if non_subusers_count < remaining_registered_users
+      participants.participants.each do |user|
+        user.account = self
+        user.account_relationship = User::AccountRelationship::User
+        user.mail_list_synced_at = Time.now  # Prevent massive mailchimp sync
+        successes += 1 if user.save
+      end
+      "Promoted #{successes} out of #{non_subusers_count} participants"
+    else
+      "Not enough remaining subusers on the account to convert participants"
+    end
+  end
+
+  def as_json(options={})
+    result = super(options)
+    # Hack alert:
+    # I think there may be a bug in how as_json works internally because our representation of Infinity does not get escaped properly in the JSON object that gets
+    # returned and then rendered. Here we try to detect that for a few attributes that might use our Infinity value and convert them to strings which is what they should be.
+    result["account"]["maximum_votes_per_poll"] = "Infinity" if result["account"]["maximum_votes_per_poll"] == Infinity
+    result["account"]["maximum_users"] = "Infinity" if result["account"]["maximum_users"] == Infinity
+    result
+  end
+
+  # True when outgoing SMS messages related to this account should have a
+  # footer added.
+  def sms_footer?
+    intro_sms?
+  end
+
+  # Returns true if the given Participant or User is registered with this
+  # account.
+  def registered?(participant_or_user)
+    case participant_or_user
+    when User
+      user = participant_or_user
+    when Participant
+      user = participant_or_user.user
+    end
+
+    user && participants.where(:id => user).present?
+  end
+
+  private
+
+  # Goes through all the polls in the account and changes them
+  # to fit the features available on the new plan.
+  def change_polls_to_fit_plan_features(new_plan)
+    remove_all_custom_keywords if not new_plan.custom_keywords? and custom_keywords?
+    owner.polls.update_all(:moderation_enabled => false) unless new_plan.moderation
+    remove_registered_users_requirement_on_polls unless new_plan.participant_reporting?
+  end
+
+  def remove_all_custom_keywords
+    registered_users.each do |u|
+      u.polls.each(&:replace_custom_keywords)
+    end
+  end
+
+  def remove_registered_users_requirement_on_polls
+    owner.polls.update_all(:registered_participants_only => false)
+  end
+
+  # Adds the 'next bill' date when a new account is created
+  def initialize_bill_at_date
+    self.bill_at ||= self.bill_at_next
+  end
+
+  def move_registered_users_to_default_accounts
+    registered_users.all.select{|user| not user.is_owner? }.each do |user|
+      user.account = Account.new
+    end
+  end
+
+  def move_registered_users_to_new_account
+    only_registered_users.each {|u| u.account = Account.new; u.save!}
+  end
+
+  def self.bill_at_reminder_range(days_from_now)
+    min = Time.now + days_from_now.days
+    max = min + 1.day
+    (min...max)
+  end
+end

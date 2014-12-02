@@ -1,0 +1,865 @@
+Rails.application.routes.draw do
+  def secure_protocol
+    ::RailsApp::Application.secure_protocol
+  end
+
+  # METAL
+  scope :to => 'poll_status#show' do
+    constraints lambda { |r| [Mime::JSON, Mime::XML].include? r.format } do
+      get "/multiple_choice_polls/:id"
+      get "/free_text_polls/:id"
+      get "/discourses/:id"
+      get "/clickable_images/:id"
+      get "/ranking_polls/:id"
+    end
+  end
+  post "/presenter/:id/participant_counter" => "participant_counter#participant_counter", :as => :participant_counter
+
+  scope '/message_router' do
+    # This route is hit (only) by Message Gateway
+    match 'sms/(:source_id)', :to => 'message_router#sms', :as => :mr_sms, :via => :all
+    # This route is hit (only) by the Twitter Results Processor
+    match 'twitter', :to => 'message_router#twitter', :as => :mr_twitter, :via => :all
+    # This is only used by /vote for the 'Click Here to LEAVE' functionality
+    match 'web_vote', :to => 'message_router#slash_vote', :as => :mr_slashvote, :via => :all
+  end
+
+  get "/vote" => "vote#new"
+  # Used for both desktop and mobile /vote.
+  post "/vote" => "message_router#slash_vote"
+
+  # KEYWORDS
+  match '/unrecognized_keyword/:keyword.:format' => 'keywords#unknown', :as => :uncognized_keyword, :via => :all
+
+  # OEmbed routes are kind of cheesy because it requires that a dispatch is put in place for discovery...
+  match '/services/oembed' => 'o_embed#index', :as => :oembed_service, :via => :all
+  match '/my/profile(.:format)' => 'users#profile', :as => :reserve, :via => :all
+
+  # New views for a Backbone version of the JS editor. Takes into account client-side
+  # pushState routing. Any client-side routing that you do should be added to this
+  # list. Be careful if you glob because you might break old routes!!!
+
+  # registered_user_required :only => [:participant_management, :participant_registration]
+  # Participant management (by presenters)
+  get 'participants', :to => 'backbone_apps#participant_management', :as => 'participants'
+  get 'participants/:id/responses', :to => 'backbone_apps#participant_management', :as => 'responses'
+
+  get "question_library", :to => "backbone_apps#question_library"
+  get "question_library/:id", :to => "backbone_apps#question_library"
+  resources :boundless_payments, :only => [:new, :create]
+
+  # We had weird, non RESTful routes for this in Rails 2.
+  # It's much easier to explicitly name routes we care
+  # about than pretend to be RESTful
+  scope "/participants/imports", :module => "account", :controller => "membership_uploads" do
+    get "", :action => "index", :as => :account_membership_uploads
+    post "", :action => "create"
+    get "/new", :action => "new", :as => :new_account_membership_upload
+    get "/:id", :action => "show", :as => :account_membership_upload
+    delete "/:id", :action => "destroy"
+
+    get "/:id/status", :action => "status", :as => :status_account_membership_upload
+    get "/:id/update_status", :action => "update_status", :as => :update_status_account_membership_upload
+    put "/:id/import", :action => "import", :as => :import_account_membership_upload
+  end
+
+  # Participant (self) registration wizard
+  #
+  # Root we provide to backbone. This can't include any variables because
+  # Backbone can't handle that with older IE browsers (that don't have pushstate).
+  get 'profile/registration', :to => 'backbone_apps#participant_registration', :as => 'participant_registration_root'
+  # Root of the wizard. This will redirect to step 1. This exists so
+  # we can add steps, removes steps, or change the order of steps without
+  # updating every place that redirects to the wizard.
+  get 'profile/registration/:id', :to => 'backbone_apps#participant_registration', :as => 'participant_registration'
+  # Step 1
+  get 'profile/registration/:id/phone', :to => 'backbone_apps#participant_registration', :as => 'participant_registration_phone'
+  # Step 2  # to be handled by https://www.pivotaltracker.com/story/show/58593170
+  # get '/profile/registration/:id/id'
+
+  # This is our editor view
+  match '/reserve' => 'users#edit', :as => :edit_reserve, :format => false, :via => :all
+  match '/my/pollev' => 'users#edit', :as => :my_pollev, :format => false, :via => :all
+  match '/yourname' => 'users#edit', :as => :yourname, :format => false, :via => :all
+
+  # MYNAMESPACE
+  namespace :my do
+    resources :results, :only => :index
+    match '/results/*poll_ids' => 'results#index', :as => :results_for_polls, :via => :all
+    resources :groups do
+      collection do
+        post :ungroup_polls
+      end
+      member do
+        put :toggle_collapsed
+      end
+    end
+    # Special route that drops a DELETE in current so that the API call to current
+    # is more RESTful.
+    delete '/polls/current' => 'polls#clear_current', :as => :current_my_polls
+    resources :polls do
+      collection do
+        post :import
+        put :start
+        put :stop
+        delete :clear
+        post :bulk
+        post :multi_edit
+        post :search
+        delete :destroy
+        get :copy_group
+        post :create_group_copies
+        post :current # DELETE is defined in a custom route below.
+        post :current_dial_test
+      end
+
+      resources :options
+      resources :archives
+    end
+    resources :lists do
+      collection do
+        get :welcome
+      end
+    end
+    resources :broadcasts do
+      member do
+        put :transmit
+      end
+    end
+  end # end namespace 'my'
+
+  flash_options_resources = ->{
+    get '/polls/:poll_id/flash_options/new'  => 'flash_options#new'
+    get '/polls/:poll_id/flash_options/edit' => 'flash_options#edit', :as => 'edit_poll_flash_options'
+    get '/polls/:poll_id/flash_options' => 'flash_options#show', :as => 'poll_flash_options'
+    put '/polls/:poll_id/flash_options' => 'flash_options#update'
+    delete '/polls/:poll_id/flash_options' => 'flash_options#destroy'
+    post '/polls/:poll_id/flash_options' => 'flash_options#create'
+  }
+  flash_options_resources.call
+  namespace :my do
+    flash_options_resources.call
+  end
+
+  # Setup a pretty route for our users who want to edit their profile
+  resource :profile, controller: 'users' do
+    resource :drip_subscription, :only => [:edit, :destroy]
+
+    member do
+      get :coverage_area
+      get :certify_phone
+      put :read_announcement
+      get :create_polls
+      get :template_poll_selector
+      post :apply_template_poll_to_polls
+      get :edit_password_or_email
+      put :update_password_or_email
+      put :send_email_verification
+    end
+    resources :memberships, controller: 'users_memberships' do
+      collection do
+        get :find_user
+      end
+      member do
+        get :account_users
+      end
+    end
+    resources :invitations do
+      member do
+        put :accept
+      end
+    end
+  end #end resource profile
+
+  put '/profile' => 'users#update', :as => :update_profile
+  match 've/:id_token' => 'users#verify_email', :as => :verify_email_route, :via => :all
+  get '/labs' => 'users#labs', :as => :labs
+  put '/labs/update' => 'users#labs_update', :as => :labs_update
+
+  resources :users, :only => [:show, :update, :index] do
+    collection do
+      get :opt_out_of_email_updates
+      get :twitter_users
+      get :exists
+      get :search
+      post :customerio
+      get :mailchimp
+      post :mailchimp
+    end
+  end
+
+  resource :register, :only => [:show, :create], :controller => "participants_signup"
+  get '/redeem/(:redemption_code)' => 'redemption_codes#redeem', :as => :redeem
+  match '/redeem' => 'redemption_codes#use_code', :as => :redeem_post, :via => [:post, :put], :via => :all
+
+  # This is a temporary redirect to allow the mac presenter to reset a password.
+  # Once we move mac presenter to web_presenter we won't need this anymore
+  get '/password_resets/new' => redirect('/login#reset')
+
+  resources :password_resets, :only => [:new, :create, :edit, :update]
+  resource :account
+
+  namespace :lms do
+    get :new
+    namespace :blackboard do
+      resources :user_connections, :only => [:create]
+      resources :roster_imports, :only => [:new, :create]
+    end
+    resources :canvas, :only => [:new, :create] do
+      collection do
+        get :auth
+      end
+    end
+  end
+
+  resource :payment_method
+  resources :orders
+  namespace :account do
+    resources :polls
+    resources :results do
+      collection do
+        get :count
+      end
+    end
+    resources :lists
+    resources :downgrades
+    resources :users do
+      member do
+        put :is_admin
+        put :add_user_to_group
+      end
+    end
+    resources :plans do
+      member do
+        get :show
+      end
+      collection do
+        post :free_trial_survey
+      end
+    end
+    resources :invitations do
+      collection do
+        get :upgrade
+      end
+      member do
+        put :resend
+      end
+    end
+    resources :user_groups
+    resources :participant_invitations do
+      member do
+        put :resend
+      end
+    end
+
+    resources :participants, :controller => :memberships, :as => :memberships do
+      collection do
+        get :unpaid
+        get :invite
+        get :count
+        post :count
+        get :purge
+        delete :bulk_remove
+        post :blow_away
+        delete :blow_away
+        post :email
+      end
+      member do
+        get :results_history
+      end
+    end
+
+    get "/surveys/upgrade/:order_id/:new_plan_id(/:old_plan_id)" => "customer_surveys#upgrade", :as => :upgrade_survey
+    get "/surveys/direct/:order_id/:new_plan_id" => "customer_surveys#direct_paid", :as => :direct_paid_survey
+    get "/surveys/downgrade_paid/:new_plan_id/:old_plan_id" => "customer_surveys#downgrade_paid", :as => :downgrade_paid_survey
+    get "/surveys/downgrade_paid/:new_plan_id/:old_plan_id/thanks" => "customer_surveys#downgrade_paid_thanks"
+  end
+
+  # We want to match /participants/:email_or_id(.:format). Email will contain a period so we grab the full token, :via => :all
+  # if the format is not xml or json
+  resources :participants, :only => [:show, :destroy, :update], :constraints => {:id => /(?:(?!\.json)(?!\.xml).)*/}
+
+  namespace :libraries do
+    resources :polls
+  end
+
+  match '/plans' => 'plans#index', :as => :plans, :via => :all
+  match '/plans' => 'plans#index', :as => :plan, :via => :all
+  match '/plans/free' => 'plans#free_redirect', :as => :free_plans, :via => :all
+  match '/plans/higher-ed' => 'plans#classroom_response_system_higher_ed', :as => :higher_ed_plans, :via => :all
+  match '/plans/k-12' => 'plans#classroom_response_system_k12', :as => :k12_plans, :via => :all
+  post '/signup/psu' => 'signup#create_progressive', :as => :progressive_signup, :protocol => secure_protocol
+  get '/signup(/:view)' => 'signup#new', :as => :signup, :protocol => secure_protocol
+  post '/signup(/:view)' => 'signup#create', :protocol => secure_protocol
+
+  post '/users' => 'signup#create', :as => :new_user, :protocol => secure_protocol
+  resources :results
+  resource :report do
+    member do
+      get :upgrade
+      get :map
+      get :summary
+      get :graded
+      get :pivot_data
+      get :survey
+      get :segmentation
+      get :sign_in_sheet
+    end
+  end
+
+  resources :groups, :only => [:index]
+
+  delete '/multiple_choice_polls/:id/results' => 'multiple_choice_polls#clear', :as => :clear_multiple_choice_poll
+  delete '/multiple_choice_polls/:id/results/archive' => 'multiple_choice_polls#archive', :as => :archive_multiple_choice_poll
+  delete '/multiple_choice_polls/:id/clear' => 'multiple_choice_polls#archive'
+  delete '/free_text_polls/:id/results' => 'free_text_polls#clear', :as => :clear_free_text_poll
+  delete '/free_text_polls/:id/results/archive' => 'free_text_polls#archive', :as => :archive_free_text_poll
+  delete '/free_text_polls/:id/clear' => 'free_text_polls#archive'
+  get '/free_text_polls/:id/registered_participants/*result_ids' => 'free_text_polls#participant_identifiers'
+  delete '/discourses/:id/results' => 'discourses#clear', :as => :clear_discourse
+  delete '/discourses/:id/results/archive' => 'discourses#archive', :as => :archive_discourse
+  delete '/discourses/:id/clear' => 'discourses#archive'
+  delete '/pledge_polls/:id/results' => 'pledge_polls#clear', :as => :clear_pledge_poll
+  delete '/pledge_polls/:id/results/archive' => 'pledge_polls#archive', :as => :archive_pledge_poll
+  delete '/pledge_polls/:id/clear' => 'pledge_polls#archive'
+  delete '/clickable_images/:id/results' => 'clickable_images#clear', :as => :clear_clickable_image
+  delete '/clickable_images/:id/results/archive' => 'clickable_images#archive', :as => :archive_clickable_image
+  delete '/clickable_images/:id/clear' => 'clickable_images#archive'
+  delete '/ranking_polls/:id/results' => 'ranking_polls#clear', :as => :clear_ranking_poll
+  delete '/ranking_polls/:id/results/archive' => 'ranking_polls#archive', :as => :archive_ranking_poll
+  delete '/ranking_polls/:id/clear' => 'ranking_polls#archive'
+  post '/multiple_choice_polls/:multiple_choice_poll_id/options/:option_id/results' => 'options#respond', :as => :multiple_choice_poll_option_results
+
+  resources :multiple_choice_polls do
+    resources :results
+    collection do
+      get :introduction
+      get :new_for_web
+      post :create_for_web
+    end
+    member do
+      get :chart
+      get :show_basic
+      get :embed
+      get :table
+      get :web
+      get :web_update
+      post :copy
+      get :copy
+      get :send_to_list
+      post :broadcast
+      put :start
+      put :stop
+      get :next
+      get :previous
+    end
+  end
+  match '/multiple_choice_polls/:id/capture/:answer_id' => 'multiple_choice_polls#capture', :as => :capture_multiple_choice_poll, :via => :all
+  match '/multiple_choice_polls/:id/capture/:answer_id.:format' => 'multiple_choice_polls#capture', :as => :formatted_capture_multiple_choice_poll, :via => :all
+
+  post '/clickable_images/:clickable_image_id/options/:option_id/results' => 'options#respond', :as => :clickable_image_option_results
+  resources :clickable_images do
+    resources :results
+    member do
+      get :chart
+      get :embed
+      get :table
+      get :web
+      get :web_update
+      post :copy
+      get :copy
+      put :start
+      put :stop
+      get :next
+      get :previous
+    end
+  end
+  match '/clickable_images/:id/capture/:answer_id' => 'clickable_images#capture', :as => :capture_clickable_image, :via => :all
+  match '/clickable_images/:id/capture/:answer_id.:format' => 'clickable_images#capture', :as => :formatted_capture_clickable_image, :via => :all
+
+  post '/ranking_polls/:ranking_poll_id/options/:option_id/results' => 'options#respond', :as => :ranking_poll_option_results
+  resources :ranking_polls do
+    resources :results
+    member do
+      get :chart
+      get :embed # TODO: Make this work properly.
+      get :table # TODO: Make this work properly.
+      get :web
+      get :web_update
+      post :copy # TODO: Make this work properly.
+      get :copy # TODO: Make this work properly.
+      put :start
+      put :stop
+      get :next
+      get :previous
+    end
+  end
+  match '/ranking_polls/:id/capture' => 'ranking_polls#capture', :as => :capture_ranking_poll, :via => :all
+  match '/ranking_polls/:id/capture.:format' => 'ranking_polls#capture', :as => :formatted_capture_ranking_poll, :via => :all
+
+  post '/free_text_polls/:free_text_poll_id/results' => 'free_text_polls#respond'
+  resources :free_text_polls do
+    resources :results
+    collection do
+      get :moderator_upgrade
+      get :new_for_list
+      post :create_for_list
+    end
+    member do
+      get :web
+      get :web_update
+      get :txt_wall
+      get :show_basic
+      get :wordcloud
+      get :words
+      get :chart
+      get :embed
+      get :moderator
+      get :moderator_has_older_results
+      post :copy
+      get :copy
+      get :send_to_list
+      post :broadcast
+      put :start
+      put :stop
+      get :next
+      get :previous
+    end
+  end
+  match '/free_text_polls/:id/capture' => 'free_text_polls#capture', :as => :capture_free_text_poll, :via => :all
+  match '/free_text_polls/:id/capture.:format' => 'free_text_polls#capture', :as => :formatted_capture_free_text_poll, :via => :all
+
+  resources :discourses do
+    resources :results, :except => :create
+    member do
+      get :web
+      get :web_update
+      get :show_basic
+      get :wordcloud
+      get :words
+      get :chart
+      get :embed
+      get :moderator
+      post :copy
+      get :copy
+      put :start
+      put :stop
+      get :next
+      get :previous
+      get :votes
+      post :results, :action => :capture, :as => :capture
+    end
+  end
+
+  resources :pledge_polls do
+    resources :results
+    member do
+      get :thermometer
+      get :table
+      get :web
+      post :copy
+      get :copy
+      put :start
+      put :stop
+      get :next
+      get :previous
+    end
+  end
+
+  resources :keywords do
+    member do
+      get :status
+    end
+  end
+
+  resources :polls do
+    member do
+      get :web_widget
+      get :chart_widget
+      get :widget
+    end
+    collection do
+      resource :random, :controller => :random_polls, :as => :random_poll, :only => [:show] do
+        get :carousel
+      end
+    end
+    resources :options
+    resources :results do
+      collection do
+        get :summary
+      end
+      member do
+        put :upvote
+        put :downvote
+        put :promote
+        put :demote
+      end
+    end
+  end
+
+  resources :participant_groups
+  resources :membership_participant_groups
+  resources :lists do
+    resources :subscriptions, :controller => 'lists_subscriptions' do
+      collection do
+        get :status
+        get :new
+        post :create
+      end
+      member do
+        put :admin_opt_in
+      end
+    end
+  end
+
+  get '/broadcasts/schedule/new' => 'broadcasts#new_schedule', :as => :new_broadcast_schedule
+  put '/broadcasts/new_set' => 'broadcasts#new_set', :as => :new_broadcasts_set
+  put '/broadcasts/create_set' => 'broadcasts#create_set', :as => :create_broadcasts_set
+  resources :broadcasts
+  match '/demos/:action' => 'demos#index', :as => :demos, :via => :all
+  resources :subscriptions do
+    collection do
+      get :welcome
+      post :authenticate_phone
+    end
+    member do
+      put :opt_out
+      put :accept
+      delete :decline
+    end
+  end
+
+  get '/sessions.jsonp' => 'sessions#create_jsonp'
+  post '/sessions.xml' => 'sessions#create', :format => 'xml'
+  post '/sessions.flexml' => 'sessions#create_flex'
+  post '/sessions.json' => 'sessions#create', :format => 'json'
+
+  # Make logins, logouts, and signups a bit easier...
+  match '/login' => 'sessions#new', :as => :signin, :protocol => secure_protocol, :via => :all
+  match '/logout' => 'sessions#destroy', :as => :signout, :protocol => secure_protocol, :via => :all
+  match '/saml_check(.:format)' => 'sessions#check_email_for_saml', :as => :check_email_for_saml, :protocol => secure_protocol, :via => :all
+  get '/sessions', :to => redirect('/login')
+  resources :sessions, :only => [:new, :show, :create, :destroy]
+
+  resources :invitations
+  resources :participant_invitations
+  match '/survey/:id' => 'survey#show', :as => :survey, :via => :all
+  post '/survey/:id/capture' => 'survey#capture', :as => :survey_capture
+  match '/survey/:id/intro' => 'survey#intro', :as => :survey_intro, :via => :all
+  match '/survey/:id/thanks' => 'survey#thanks', :as => :survey_thanks, :via => :all
+  match '/survey/:id/poll(/:poll_number)' => 'survey#poll', :as => :survey_poll, :via => :all
+
+  namespace :admin do
+    match '/' => :index, :via => :all
+    post '/homepage_poll' => :set_homepage_poll, :as => :set_homepage_poll, :via => :all
+    match '/summary' => :summary, :as => :summary, :via => :all
+
+    match '/business/:action', :controller => :business, :as => :business, :via => :all
+    get "/business", :controller => :business, :action => :index, :as => :business_index
+
+    match '/dirty_data/:action', :controller => :dirty_data, :as => :dirty_data, :via => :all
+    get "/dirty_data", :controller => :dirty_data, :action => :index, :as => :dirty_data_index
+
+    match '/queue/:action', :controller => :queue, :as => :queue, :via => :all
+    get "/queue", :controller => :queue, :action => :index, :as => :queue_index
+
+    resources :blackboard_connections
+
+    resources :notes
+    resources :orders do
+      collection do
+        get :export
+        get :export_completed
+        get :leads
+      end
+      member do
+        put :email
+      end
+    end
+    resources :users do
+      collection do
+        get :publisher_search
+        get :raplet
+        get :uservoice
+        get :labs_report
+      end
+      member do
+        put :login_as_user
+        put :new_account
+        get :memberships
+        put :lookup_carrier
+        put :resequence
+      end
+      get "style" => "user_style#edit", as: "style"
+      put "style" => "user_style#update"
+    end
+    resources :participants do
+      member do
+        put :lookup_carrier
+        put :async_lookup_carrier
+        put :backup_lookup_carrier
+        delete :destroy_group_session
+      end
+    end
+    resources :direct_twitters
+    resources :memberships
+    resources :participant_groups do
+      member do
+        post :add_membership
+        delete :remove_membership
+      end
+    end
+    resources :announcements
+    resources :accumulators
+    resources :invitations
+    resources :polls do
+      collection do
+        get :summary
+      end
+      member do
+        put :recount
+        delete :expire_cache
+        delete :expire_score_cache
+      end
+    end
+    resources :groups
+    resources :user_groups
+    resources :library_cards
+    resources :results do
+      collection do
+        get :summary
+        get :graph
+      end
+    end
+    resources :lists do
+      member do
+        put :reset_opt_out_count
+      end
+      resources :subscriptions do
+        member do
+          put :accept
+          delete :delete
+        end
+      end
+    end
+    resources :broadcasts do
+      member do
+        put :unsend
+      end
+    end
+    resources :keywords do
+      collection do
+        get :counts
+        get :ranges
+        get :expirations
+      end
+    end
+    resources :business_events
+    resources :plans do
+      resources :billing_cycles
+    end
+    resources :plan_sets do
+      member do
+        put :insert_at
+      end
+    end
+    resources :accounts do
+      collection do
+        get :summary
+        get :paying
+        get :by_subscribers
+        get :check_in
+      end
+      member do
+        post :toggle_library_enabled
+        put :toggle_checked_in
+        get :memberships
+        get :usage
+        put :promote_participants_to_subusers
+        post :check_in_or_skip
+      end
+    end
+    resources :sources
+    resources :service_areas
+    resources :payment_methods
+    resources :redemption_codes do
+      collection do
+        get :report_by_month
+        get :report
+      end
+      member do
+        put :reset
+      end
+    end
+    resources :presenter_sessions
+  end
+
+  match '/permalinks/:poll_type/:prefix' => 'utilities#permalinks', :as => :util_permalinks, :via => :all
+  match '/revision' => 'utilities#revision', :as => :revision, :via => :all
+  match '/_country_code' => 'utilities#set_country_code', :as => :force_country_code, :via => :all
+  match '/_env' => 'utilities#environment', :as => :request_env, :via => :all
+  match '/raise' => 'utilities#exception', :as => :raise_exception, :via => :all
+  match '/opera_sms_receipt' => 'utilities#opera_sms_receipt', :as => :opera_sms_receipt, :via => :all
+  match '/auth/:provider' => 'authorizations#blank', :via => :all
+  Rails.application.config.saml.each do |provider, saml_settings|
+    match "/auth/#{provider}/callback" => "#{provider}_saml_authorizations#create", :via => :all
+    unless saml_settings[:disable_signups]
+      resources "#{provider}_signups", :only => [:new, :create], :protocol => secure_protocol
+    end
+  end
+  match '/auth/:provider/callback' => 'authorizations#create', :via => :all # non-saml
+  match '/auth/failure' => 'authorizations#denied', :via => :all
+  resources :authorizations, :only => [:create, :destroy]
+  resources :multiple_choice_polls do
+    collection do
+      get :new_for_web
+    end
+  end
+
+  # Website content pages. We only want to serve up HTML for these puppies.
+  scope :constraints => RoutingFormat.new(:html) do
+    get 'features' => 'upgrades#index', :as => :features
+    get 'features/:action' => 'upgrades#index', :as => :feature
+    get 'terms' => 'content#terms', :as => :terms
+    get 'terms/sms/' => 'content#sms_terms', :as => :sms_terms
+    get 'faq' => 'content#faq', :as => :faq
+    get 'guide' => 'content#guide', :as => :guide
+    get 'api' => 'content#api', :as => :api
+    get 'app' => 'content#app', :as => :app
+    get 'app/mac' => 'content#mac', :as => :mac_app
+    get 'app/mac/help', :to => redirect('/guide#powerpoint_2011_for_mac'), :as => :mac_app_help
+    get 'app/win' => 'content#win', :as => :win_app
+    get 'app/help' => redirect('/guide#presenting_in_a_slideshow')
+    get 'enterprise/security' => 'content#enterprise_security', :as => :map
+    get 'enterprise/sla' => 'content#enterprise_sla', :as => :enterprise_sla
+    get 'about' => 'content#about', :as => :about
+    get 'privacy-policy' => 'content#privacy_policy', :as => :privacy_policy
+    get 'ars-comparison' => 'content#ars_comparison', :as => :ars_comparison
+    get 'sms-faith-based' => 'content#sms_faith_based', :as => :sms_faith_based
+    get 'audience-response-system' => 'content#audience_response_system', :as => :audience_response_system
+    get 'poll-everywhere-vs-ars' => 'content#poll_everywhere_vs_ars', :as => :poll_everywhere_vs_ars
+    get 'vs' => 'content#vs', :as => :vs
+    get 'how-it-works' => 'content#how_it_works', :as => :how_it_works
+    get 'smartphone-web-voting' => 'content#smartphone_web_voting', :as => :smartphone_web_voting
+    get 'buzz' => 'content#buzz', :as => :buzz
+    get 'logos' => 'content#logos', :as => :logos
+    get 'twitter-powerpoint-slides' => 'content#twitter_powerpoint_slides', :as => :twitter_powerpoint_slides
+    get 'international' => 'content#international', :as => :international
+    get 'international-sms-voting-coverage-list' => 'content#international_sms_voting_coverage_list', :as => :international_sms_voting_coverage_list
+    get 'presenter-notes' => 'content#presenter_notes', :as => :presenter_notes
+    get 'w9' => 'content#w9', :as => :w9
+    get 'community-support' => 'content#community_support', :as => :community_support
+    get 'professional-support' => 'content#professional_support', :as => :professional_support
+    get 'onsite-and-dedicated-support' => 'content#onsite_and_dedicated_support', :as => :onsite_and_dedicated_support
+    get 'jobs' => 'content#jobs', :as => :jobs
+    get 'k12-student-response-system' => 'content#k12_student_response_system', :as => :k12_student_response_system
+    get 'classroom-response-system' => 'content#classroom_response_system', :as => :classroom_response_system
+    get 'eibtm' => 'content#eibtm', :as => :eibtm
+    get 'purchase-order' => 'content#purchase_order', :as => :purchase_order
+    get 'ppx' => 'content#ppx', :as => :ppx
+    get 'icebreaker-poll-contest' => 'content#icebreaker_poll', :as => :icebreaker_poll
+    get 'icebreaker-poll-contest-rules' => 'content#contest_rules', :as => :contest_rules
+    get 'free-text-polling' => 'content#free_text_polling', :as => :free_text_polling
+    get 'text-survey' => 'content#text_survey', :as => :text_survey
+    get 'dribbble-meetup' => 'content#dribbble_meetup', :as => :dribbble_meetup
+    get 'events' => 'content#events', :as => :events
+    get 'training' => 'content#training', :as => :training
+    get 'vs/:competitor' => 'content#vs'
+    get 'css_garden' => 'content#css_garden', :as => :css_garden
+    get 'pollev' => 'content#pollev', :as => :mypollev
+    get 'home' => 'content#index', :as => :home
+    get 'error/:code' => 'content#error'
+    get 'contact/higher-ed' => 'contact#higher_ed', :as => :contact_higher_ed
+    get 'contact/enterprise' => 'contact#enterprise', :as => :contact_enterprise
+    get 'contact/k12' => 'contact#k12', :as => :contact_k12
+    get 'use_cases' => 'content#use_case_gallery', :as => :use_case_gallery
+    get 'use_cases/:view' => 'content#use_case', :as => :use_case
+    get 'mobile' => 'content#mobile', :as => :mobile
+    get 'enterprise' => 'content#enterprise', :as => :enterprise
+
+
+    # Old content URLs that we redirect to new pages.
+    get 'user-guide', :to => redirect('/guide')
+    get 'sms-classroom-response-system', :to => redirect('/classroom-response-system')
+    get 'highered-student-response-system', :to => redirect('/classroom-response-system')
+    get 'sales', :to => redirect('/')
+    get 'enterprise-sla', :to => redirect('/enterprise/sla')
+    get 'plans/classroom_response_system_higher_ed', :to => redirect('/plans/higher-ed')
+    get 'plans/classroom_response_system_k12', :to => redirect('/plans/k-12')
+    get 'keynote', :to => redirect('/app')
+    get 'powerpoint', :to => redirect('/app')
+    get 'macpresenter', :to => redirect('/app/mac/help'), :as => :macpresenter
+    get 'ourbirthday', :to => redirect('/turning-five')
+  end
+
+  post 'contact-us' => 'contact#create', :as => :contact
+  post 'icebreaker-poll' => 'contact#icebreaker_poll', :as => :icebreaker_submission
+  match '/safari_redirect' => 'safari_redirect#redirect', :as => :safari_redirect, :via => :all
+
+  get 'app.dmg', :to => redirect(Rails.configuration.mac_presenter_url.to_s)
+  get 'app.exe', :to => redirect(Rails.configuration.win_presenter_url.to_s)
+  get 'blackboard.war', :to => redirect(ENV['BLACKBOARD_BUILDING_BLOCK_URL'])
+  get 'mail', :to => redirect(ENV['MAIL_URL']) if ENV['MAIL_URL']
+
+  # TODO - Remove api/edge and change this block to `namespace :api` when
+  # all of the `/api/edge` paths are removed from the polleverywhere/models
+  # project.
+  %w[api api/edge].each do |path|
+    scope path, :module => :api do
+      resources :participants do
+        collection do
+          get :invite
+          get :count
+        end
+      end
+      get '/profile' => 'users#profile'
+
+      delete '/participants' => 'participants#bulk_destroy'
+      match '/participants/:id' => 'participants#update', :via => :patch # TODO - Change match to patch in Rails 4, :via => :all
+      get '/participants/:id/responses' => 'responses#index'
+
+      resources :service_areas, :only => [:index]
+      resources :session_keyword_formats, :only => [:index]
+
+      resources :participant_groups
+      match '/participant_groups/:id' => 'participant_groups#update', :via => :patch # TODO - Change match to patch in Rails 4, :via => :all
+
+      resources :participant_participant_groups
+
+      match '/users/search' => 'users#search', :via => :all
+      match '/users/:id/remind' => 'users#remind', :via => :all
+      match '/users/:id' => 'users#update', :via => :patch # TODO - Change match to patch in Rails 4, :via => :all
+      get   '/users/:id/participants/count' => 'users#participants_count'
+
+      resources :registrations, :only => [:show, :create]
+
+      resources :payment_methods, :only => [:create, :show, :destroy]
+      match '/payment_methods/:id' => 'payment_methods#update', :via => :patch # TODO - Change match to patch in Rails 4, :via => :all
+
+      resource :sessions, :only => [:create, :destroy]
+      resource :password_resets, :only => [:create]
+      resources :polls, :only => [:index]
+      resources :groups, :only => [:index, :show, :destroy]
+      match '/groups/:id' => 'groups#update', :via => :patch # TODO - Change match to patch in Rails 4
+
+      post '/boundless_polls' => 'boundless_polls#create'
+    end
+  end
+
+  # Technically we shouldn't need this. But we have some weird stuff going on
+  # in OEmbedController where we parse params. If a bad param is sent in, this
+  # route might throw things off. This reduces the chances of that happening.
+  # Why don't we just share the whole regex as a single constant rather than
+  # breaking it apart like this? We want to have different validation messages
+  # for "too long" vs. "invalid".
+  constraints :login => /#{Keyword::VALIDATION_REGEX_SHARED}{1,#{Keyword::MAX_KEYWORD_LENGTH}}/ do
+    # Poll Ev pages. These are lowest priority because they're essentially a
+    # catch-all off of our root domains.
+    match '/:login' => 'users#show', :via => :all
+
+    # Embedding PollEv Pages
+    match '/:login/embed' => 'users#embed', :via => :all
+    match '/:login/embed/api' => 'users#embed_api', :via => :all
+  end
+  root :to => 'content#index'
+end

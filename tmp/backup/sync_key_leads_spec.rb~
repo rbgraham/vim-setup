@@ -1,0 +1,27 @@
+require_relative '../../lib/closeio/sync_key_leads'
+
+describe Closeio::SyncKeyLeads do
+  subject(:sync) { Closeio::SyncKeyLeads.new }
+  let(:lead) { 'lead' }
+  let(:lead2) { 'lead1' }
+  let(:leads) { {total_results: 10, data: [lead, lead2], 
+                        has_more: false} }
+  let(:account) { double serializer: {} }
+  describe "#run" do
+    it "calls update for each opportunity" do
+stub_request(:get, "https://abc123:@app.close.io/api/v1/lead/?_limit=100&_skip=0&query=status:%22Plenary%20Plan%22%20OR%20status:%22Conference%20Plan%22%20OR%20status:%22Presenter%20Plan%22%20OR%20status:%22Per%20Instructor%20Plan%22%20OR%20status:%22Student%20Pays%20Plan%22%20OR%20status:%22Enterprise%20Customer%22").
+         with(:headers => {'Accept'=>'application/json'}).
+         to_return(:status => 200, :body => leads.to_json, :headers => {})
+
+      expect(Closeio::Lead).to receive(:new).with(lead) { lead }
+      expect(Closeio::Lead).to receive(:new).with(lead2) { lead2 }
+
+      expect(lead).to receive(:update)
+      expect(lead2).to receive(:update)
+
+      expect(sync).to receive(:find_account).twice { account }
+
+      sync.run
+    end
+  end
+end

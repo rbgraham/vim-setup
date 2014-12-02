@@ -1,0 +1,49 @@
+class PlansController < ApplicationController
+  def free_redirect
+    # LOL
+    head :moved_permanently, :location => plans_path
+  end
+
+  def index
+    @plan_set = PlanSet.default
+    # calling to_a
+    # else we get undefined method `pop' for #<Plan::ActiveRecord_AssociationRelation:0x0000010a22a500>
+    @plans = @plan_set.plans.salable.all.to_a
+    # Remove the Platinum plan, plans page now points to Enterprise contact form instead
+    @plans.pop unless Rails.env.test?
+
+    high_week_weight = 1#current_account.plan_set || cookie["plan_set"] || Date.today.cweek % 2
+    #cookie["plan_set"] = high_week_weight
+    low_week_weight = 1 - high_week_weight
+    @test_string = ab_test('plans', {'low' => low_week_weight}, {'high' => high_week_weight})
+    p '='*88
+    p session
+    p '='*88
+  end
+
+  def classroom_response_system_higher_ed
+    @plan_set = find_plan_set('classroom_response_system_higher_ed')
+    @plans = @plan_set.plans.salable.all
+    @institution = Plan.find_by_name("University-wide")
+    @free_plan = @plans.find{|plan| plan.self_serviceable? and plan.price == 0.0 and plan.participant_price == 0.0 }
+    @student_plans = @plans.select{|plan| plan.respond_to?(:billing_cycles) and plan.participant_price > 0 and plan.price == 0 }
+    @instructor_plans = @plans.select{|plan| plan.respond_to?(:billing_cycles) and plan.participant_price == 0.0 and plan.price > 0  }
+    @paid_plans = @student_plans + @instructor_plans
+  end
+
+  def classroom_response_system_k12
+    @plan_set = find_plan_set('classroom_response_system_k12')
+    @plans = @plan_set.plans.salable.all
+    @free_plan = @plans.find{|plan| plan.self_serviceable? and plan.price == 0.0 and plan.participant_price == 0.0 }
+    @teacher_plan = Plan.find_by_name("Individual Teacher")
+    @institution = Plan.find_by_name("University-wide")
+  end
+
+  private
+
+  def find_plan_set(permalink)
+    plan_set = PlanSet.find_by_permalink(permalink)
+    redirect_to plans_path unless plan_set
+    plan_set
+  end
+end

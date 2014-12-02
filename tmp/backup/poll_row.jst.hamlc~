@@ -1,0 +1,36 @@
+.details
+  .spinner Loading
+  .progress_meter
+    .bar{style: "width: #{@barWidth}%"}
+    %a.results_count{href: "#{@resultsUrl}"}= @resultsCount
+  -if @isOwner
+    %a.push.icon(data-glyph='push')
+  -if @showActions
+    .actions
+      -if @canEdit
+        %a.edit.text_button{href: "#{@editUrl}"} Edit
+      -if @opened
+        %a.state.red_button(href='') Stop
+      -else
+        %a.state.green_button(href='') Start
+  -else
+    .actions
+      %a.copy.text_button{href: "#{@copyUrl}", data-method: "post"} Copy
+  .date_created= @dateCreated
+-if @sortable
+  .dragger
+    .icon.static-move_up_down
+-else
+  .dragger{style: 'visibility: hidden'}
+    .icon.static-move_up_down
+%span.controls
+  -switch @modelType
+    -when 'clickable_image'
+      .poll-icon.icon(data-glyph="clickable-image")
+    -when 'ranking_poll'
+      .poll-icon.icon(data-glyph="sort")
+    -else
+      .poll-icon.icon(data-glyph="#{@modelType.replace(/_/g, '-')}")
+  %input(type="checkbox" class="select")
+.title
+  %a{href: "#{@url}"}!= @title BLAH
